@@ -1,0 +1,75 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "Audio-Sentiment-Analysis Server"
+readme = "README.md"
+authors = [
+    { name = "Anvay Wankhede", email = "anvaymilind@gmail.com" },
+    { name = "Nitu Pushkar", email = "" }
+]
+requires-python = ">=3.12, <3.14"
+dependencies = [
+    "av<19.0.0",
+    "fastapi>=0.141.1",
+    "faster-whisper>=1.2.1",
+    "funasr>=1.4.16",
+    "librosa>=1.0.0",
+    "modelscope>=1.40.1",
+    "mypy>=2.4.0",
+    "optimum[onnxruntime]>=1.17.1",
+    "pyannote-audio>=4.0.7",
+    "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
+    "soundfile>=0.14.0",
+    "torch>=2.14.1",
+    "torchaudio>=2.11.0",
+    "torchvision>=0.29.1",
+    "transformers>=5.17.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+server = "main:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.9",
+]
+
+[tool.uv]
+environments = ["sys_platform == 'win32'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+
+[tool.pyright]
+include = ["src"]
+extraPaths = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# E: pycodestyle errors, F: Pyflakes (undefined names, unused imports)
+# Intentionally excludes I (import sorting) and UP (pyupgrade) to reduce noise
+# E501 is managed by the ruff formatter and ignored here to avoid squiggly lines on docstrings/comments
+select = ["E", "F"]
+ignore = ["E501"]
+
+[tool.mypy]
+mypy_path = ["src", "typings"]
+explicit_package_bases = true
+ignore_missing_imports = true
+
+
