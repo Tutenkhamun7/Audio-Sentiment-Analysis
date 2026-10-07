@@ -1,0 +1,2077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multimodal Conversational Audio Sentiment & Intelligence Platform — Architecture & Tech Stack</title>
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: #111827;
+      --bg-card-hover: #1f293d;
+      --border: #243048;
+      --border-accent: #3b82f6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-glow: rgba(59, 130, 246, 0.25);
+      --accent-cyan: #06b6d4;
+      --accent-purple: #8b5cf6;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-amber: #f59e0b;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      --font-mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+      --slide-width: 1200px;
+      --slide-height: 680px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow-x: hidden;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Ambient Background Glow */
+    .ambient-glow {
+      position: fixed;
+      width: 700px;
+      height: 700px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.05) 45%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    /* Presentation Frame */
+    .presentation-container {
+      position: relative;
+      width: 95vw;
+      max-width: var(--slide-width);
+      height: 90vh;
+      max-height: var(--slide-height);
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 40px rgba(59, 130, 246, 0.12);
+      display: flex;
+      flex-direction: column;
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    /* Top Navigation Bar */
+    .deck-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 28px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(17, 24, 39, 0.6);
+    }
+
+    .brand-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--accent-cyan);
+    }
+
+    .brand-badge .pill {
+      background: rgba(6, 182, 212, 0.15);
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      color: #67e8f9;
+    }
+
+    .slide-progress-info {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .slide-indicator {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    /* Slide Stage */
+    .slide-viewport {
+      flex: 1;
+      position: relative;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 32px 40px;
+      scroll-behavior: smooth;
+    }
+
+    .slide-viewport::-webkit-scrollbar {
+      width: 6px;
+    }
+    .slide-viewport::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .slide {
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+      animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      opacity: 0;
+      transform: translateY(12px);
+    }
+
+    .slide.active {
+      display: flex;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @keyframes fadeIn {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Slide Typography */
+    .slide-title-group {
+      margin-bottom: 8px;
+    }
+
+    .slide-tag {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent-purple);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .slide-tag::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .slide-title {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      background: linear-gradient(135deg, #ffffff 30%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .slide-subtitle {
+      font-size: 1rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+
+    /* Grid Layouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .card:hover {
+      border-color: rgba(59, 130, 246, 0.4);
+      background: var(--bg-card-hover);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .card-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      font-weight: bold;
+    }
+
+    .icon-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .icon-purple { background: rgba(139, 92, 246, 0.2); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.3); }
+    .icon-cyan { background: rgba(6, 182, 212, 0.2); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.3); }
+    .icon-emerald { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .icon-rose { background: rgba(244, 63, 94, 0.2); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.3); }
+    .icon-amber { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+
+    .card-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .card-subtitle {
+      font-size: 0.75rem;
+      color: var(--accent-cyan);
+      font-family: var(--font-mono);
+    }
+
+    .card-body {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      line-height: 1.55;
+    }
+
+    .card-list {
+      list-style: none;
+      margin-top: 8px;
+    }
+
+    .card-list li {
+      position: relative;
+      padding-left: 18px;
+      margin-bottom: 6px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .card-list li::before {
+      content: '▹';
+      position: absolute;
+      left: 0;
+      color: var(--accent-cyan);
+      font-weight: bold;
+    }
+
+    /* Architecture Flow Diagrams (SVG & Flex) */
+    .arch-flow-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-top: 10px;
+    }
+
+    .flow-step-bar {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      position: relative;
+    }
+
+    .flow-node {
+      background: #131c31;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      transition: all 0.2s;
+    }
+
+    .flow-node:hover {
+      border-color: var(--accent-cyan);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .flow-node.highlight {
+      border-color: var(--accent-purple);
+      background: #171c38;
+      box-shadow: 0 0 15px rgba(139, 92, 246, 0.2);
+    }
+
+    .flow-number {
+      font-size: 0.68rem;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      letter-spacing: 0.05em;
+    }
+
+    .flow-node-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .flow-node-desc {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      line-height: 1.35;
+    }
+
+    /* Badges & Pills */
+    .pill-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .tag-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      font-weight: 500;
+      background: rgba(255, 255, 255, 0.06);
+      color: #cbd5e1;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .tag-blue { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border-color: rgba(59, 130, 246, 0.3); }
+    .tag-green { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
+    .tag-purple { background: rgba(139, 92, 246, 0.15); color: #d8b4fe; border-color: rgba(139, 92, 246, 0.3); }
+    .tag-amber { background: rgba(245, 158, 11, 0.15); color: #fde68a; border-color: rgba(245, 158, 11, 0.3); }
+    .tag-rose { background: rgba(244, 63, 94, 0.15); color: #fda4af; border-color: rgba(244, 63, 94, 0.3); }
+
+    /* Comparison / Data Tables */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 8px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .data-table th, .data-table td {
+      padding: 10px 14px;
+      text-align: left;
+    }
+
+    .data-table th {
+      background: #162036;
+      color: #cbd5e1;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+    }
+
+    .data-table tr {
+      background: #0f172a;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .data-table tr:last-child {
+      border-bottom: none;
+    }
+
+    .data-table tr:hover {
+      background: #17233f;
+    }
+
+    .data-table td {
+      color: #e2e8f0;
+    }
+
+    .data-table code {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-cyan);
+    }
+
+    /* Code Blocks */
+    .code-box {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: #38bdf8;
+      overflow-x: auto;
+    }
+
+    /* Key Metrics Callouts */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin: 10px 0;
+    }
+
+    .metric-card {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9));
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      text-align: center;
+    }
+
+    .metric-val {
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    .metric-val.blue { color: #60a5fa; }
+    .metric-val.emerald { color: #34d399; }
+    .metric-val.purple { color: #c084fc; }
+    .metric-val.amber { color: #fbbf24; }
+
+    .metric-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Interactive Tab Switcher */
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+      margin-bottom: 14px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #60a5fa;
+    }
+
+    .tab-pane {
+      display: none;
+    }
+
+    .tab-pane.active {
+      display: block;
+    }
+
+    /* Detailed Architecture Flow Styles */
+    .arch-flow-diagram {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .flow-stage-box {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .flow-stage-box:hover {
+      border-color: rgba(59, 130, 246, 0.4);
+      background: #131c33;
+    }
+
+    .flow-stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .flow-stage-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .flow-stage-badge {
+      font-size: 0.68rem;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .flow-branch-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .flow-branch-card {
+      background: #162036;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      transition: all 0.2s;
+    }
+
+    .flow-branch-card:hover {
+      border-color: var(--accent-cyan);
+      background: #1c2944;
+    }
+
+    .flow-branch-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+
+    .flow-branch-desc {
+      font-size: 0.77rem;
+      color: #94a3b8;
+      line-height: 1.45;
+    }
+
+    .flow-arrow-down {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--accent-cyan);
+      font-size: 0.73rem;
+      font-family: var(--font-mono);
+      margin: 3px 0;
+      opacity: 0.9;
+    }
+
+    .flow-arrow-down::before,
+    .flow-arrow-down::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.4), transparent);
+    }
+
+    .data-pill-code {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 2px 7px;
+      border-radius: 4px;
+      color: #38bdf8;
+    }
+
+    /* Bottom Control Bar */
+    .deck-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 28px;
+      border-top: 1px solid var(--border);
+      background: rgba(17, 24, 39, 0.6);
+      z-index: 10;
+    }
+
+    .controls-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .nav-btn {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: #f1f5f9;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 7px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .nav-btn:hover:not(:disabled) {
+      background: #334155;
+      border-color: var(--accent-cyan);
+      color: #fff;
+    }
+
+    .nav-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      border-color: #3b82f6;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+    }
+
+    .controls-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .icon-btn {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: #cbd5e1;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+      background: #334155;
+      color: #fff;
+    }
+
+    /* Modal / Overview Drawer */
+    .overview-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(3, 7, 18, 0.85);
+      backdrop-filter: blur(16px);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+    }
+
+    .overview-modal.open {
+      display: flex;
+    }
+
+    .overview-content {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      max-width: 1000px;
+      width: 100%;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+    }
+
+    .overview-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .overview-grid {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .overview-card {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .overview-card:hover {
+      border-color: var(--accent-cyan);
+      transform: translateY(-2px);
+      background: #25334d;
+    }
+
+    .overview-card.active-slide {
+      border-color: var(--accent-purple);
+      background: #282b52;
+    }
+
+    .overview-num {
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      color: var(--accent-cyan);
+      font-weight: bold;
+    }
+
+    .overview-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    /* Fullscreen Mode Overrides */
+    :fullscreen .presentation-container {
+      max-width: 100vw;
+      max-height: 100vh;
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+      border: none;
+    }
+
+    /* Print / PDF Styling */
+    @media print {
+      body {
+        background: #fff;
+        color: #000;
+      }
+      .ambient-glow, .deck-header, .deck-footer, .overview-modal {
+        display: none !important;
+      }
+      .presentation-container {
+        border: none;
+        box-shadow: none;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        max-height: none;
+        background: transparent;
+      }
+      .slide {
+        display: flex !important;
+        opacity: 1 !important;
+        transform: none !important;
+        page-break-after: always;
+        padding: 40px 0;
+      }
+      .card {
+        border-color: #cbd5e1;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .slide-title {
+        color: #0f172a;
+        -webkit-text-fill-color: #0f172a;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="ambient-glow"></div>
+
+  <div class="presentation-container" id="presentationFrame">
+
+    <!-- Header / Navigation Bar -->
+    <header class="deck-header">
+      <div class="brand-badge">
+        <span class="pill">PLATFORM ARCHITECTURE DECK</span>
+        <span>Audio Sentiment & Intelligence</span>
+      </div>
+      <div class="slide-progress-info">
+        <span id="slideCategory" style="color: #60a5fa;">System Overview</span>
+        <span class="slide-indicator" id="slideIndicator">01 / 11</span>
+      </div>
+    </header>
+
+    <!-- Slide Viewport -->
+    <main class="slide-viewport" id="slideViewport">
+
+      <!-- ================= SLIDE 1: Title Slide ================= -->
+      <section class="slide active" data-category="Platform Overview" data-title="Executive Overview">
+        <div class="slide-title-group" style="margin-top: 20px;">
+          <div class="slide-tag">Production Platform Architecture</div>
+          <h1 class="slide-title" style="font-size: 2.7rem;">Multimodal Conversational Audio Sentiment & Intelligence Platform</h1>
+          <p class="slide-subtitle" style="font-size: 1.15rem; max-width: 900px; margin-top: 10px;">
+            A high-performance, modular system pairing <strong>Local Signal Perception</strong> (Continuous ASR, Native Overlap Diarization, Acoustic SER) with <strong>Cloud Cognitive Dialogue Reasoning</strong> (Qwen 2.5 72B / OpenRouter) and <strong>LangGraph Autonomous Agents</strong>.
+          </p>
+        </div>
+
+        <div class="grid-4" style="margin-top: 25px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-blue">🎙️</div>
+              <div>
+                <div class="card-title">Continuous ASR</div>
+                <div class="card-subtitle">Faster-Whisper</div>
+              </div>
+            </div>
+            <div class="card-body">Large-v3-Turbo with Silero VAD. 30s cross-attention preserved; zero hallucination truncation.</div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-purple">👥</div>
+              <div>
+                <div class="card-title">Native Overlaps</div>
+                <div class="card-subtitle">Pyannote 3.1</div>
+              </div>
+            </div>
+            <div class="card-body">Extracts exact intervals of cross-talk, tracking who interrupted whom & speech collision metrics.</div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-cyan">🌊</div>
+              <div>
+                <div class="card-title">Acoustic Tone</div>
+                <div class="card-subtitle">Emotion2Vec+</div>
+              </div>
+            </div>
+            <div class="card-body">FunASR acoustic embeddings with 350ms ambient padding & conversational inertia smoothing.</div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-emerald">🧠</div>
+              <div>
+                <div class="card-title">Cloud Semantics</div>
+                <div class="card-subtitle">Qwen 2.5 72B</div>
+              </div>
+            </div>
+            <div class="card-body">Batched whole-dialogue contextual reasoning via OpenRouter. Disentangles sarcasm & polite anger.</div>
+          </div>
+        </div>
+
+        <div class="metric-grid" style="margin-top: 20px;">
+          <div class="metric-card">
+            <div class="metric-val emerald">~3.5 GB</div>
+            <div class="metric-label">Estimated Local VRAM Consumed</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val blue">1 Roundtrip</div>
+            <div class="metric-label">Batched Cloud Context Reasoning</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val purple">100%</div>
+            <div class="metric-label">Word-to-Speaker Alignment</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val amber">&lt;1.8s</div>
+            <div class="metric-label">Affective Inertia Filter Window</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 2: The Core Problem & Motivation ================= -->
+      <section class="slide" data-category="Motivation" data-title="The Challenge in Telephony Dialogue">
+        <div class="slide-title-group">
+          <div class="slide-tag">The Conversational Challenge</div>
+          <h2 class="slide-title">Why Text-Only Sentiment Fails in Real Dialogues</h2>
+          <p class="slide-subtitle">Contact center calls and real-world audio conversations contain acoustic subtleties that break naive NLP pipelines.</p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card" style="border-left: 4px solid var(--accent-rose);">
+            <div class="card-header">
+              <div class="card-icon icon-rose">⚠️</div>
+              <div class="card-title">Traditional Naive Pipeline Flaws</div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Pre-chunking before Whisper:</strong> Slicing audio into 2s segments destroys Whisper's 30-second context, creating hallucinated text loops and clipped syllables.</li>
+              <li><strong>Blind Overlap Erasure:</strong> Treating multi-speaker cross-talk as noise discards the most important signal of caller frustration: interruptions and over-talk.</li>
+              <li><strong>Isolated Sentence Scoring:</strong> Classifying "Oh wonderful, another fee" without previous turns flags it as HAPPY (100% false positive sarcasm failure).</li>
+              <li><strong>Acoustic False Alarms:</strong> Polite questions ("Would that work for you?") end on rising pitch inflection, frequently misclassified as ANGRY without question normalization.</li>
+            </ul>
+          </div>
+
+          <div class="card" style="border-left: 4px solid var(--accent-emerald);">
+            <div class="card-header">
+              <div class="card-icon icon-emerald">✨</div>
+              <div class="card-title">Our Multimodal Intelligence Solution</div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Continuous Global Transcription:</strong> Transcribe the full stream first with word timestamps; segment downstream along speaker turns & linguistic bounds.</li>
+              <li><strong>Overlap As Conversational Intelligence:</strong> Native Pyannote overlap tracking records <code>is_interruption</code>, <code>interrupted_by</code>, and <code>overtalk_ratio</code>.</li>
+              <li><strong>Batched Context Dialogue LLM:</strong> Sends the full conversation chronology to Qwen 2.5 72B in one single request to comprehend the entire narrative arc.</li>
+              <li><strong>Bimodal Incongruence Engine:</strong> Compares semantic sentiment against acoustic tone to expose hidden hostility, sarcasm, and nervous customer masking.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 15px; background: rgba(30, 41, 59, 0.4);">
+          <div class="card-title" style="font-size: 0.95rem; color: #93c5fd; margin-bottom: 6px;">💡 Key Behavioral Principle</div>
+          <p class="card-body" style="font-size: 0.85rem;">
+            When acoustic tone says <em>ANGRY / TENSE</em> while semantic words say <em>"Thank you so much"</em>, our platform does not average them into NEUTRAL. It flags an explicit <strong>Masked Incongruence Anomaly</strong> (Hostile Sarcasm) and escalates to supervisory review.
+          </p>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 3: Complete Architectural Flow ================= -->
+      <section class="slide" data-category="Architecture" data-title="Complete Architectural Flow">
+        <div class="slide-title-group">
+          <div class="slide-tag">End-to-End System Pipeline</div>
+          <h2 class="slide-title">Complete Architectural Flow & Data Pathways</h2>
+          <p class="slide-subtitle">Detailed trace of signal flow from raw audio ingestion, parallel GPU perception, domain alignment, bimodal acoustic/semantic scoring, affective dynamics, to autonomous agents.</p>
+        </div>
+
+        <div class="tab-container" style="margin-top: 10px;">
+          <!-- Tab Navigation -->
+          <div class="tab-bar">
+            <button class="tab-btn active" data-target="flow-tab-visual">🗺️ Visual Flow Architecture</button>
+            <button class="tab-btn" data-target="flow-tab-data">📦 Data Transformation Pipeline</button>
+            <button class="tab-btn" data-target="flow-tab-runtime">⚡ Execution & Concurrency</button>
+          </div>
+
+          <!-- TAB 1: Visual Flow Architecture -->
+          <div class="tab-pane active" id="flow-tab-visual">
+            <div class="arch-flow-diagram">
+              
+              <!-- STAGE 1: Audio Ingestion -->
+              <div class="flow-stage-box" style="border-left: 4px solid var(--accent-cyan);">
+                <div class="flow-stage-header">
+                  <div class="flow-stage-title">
+                    <span style="color: var(--accent-cyan);">01</span> Audio Ingestion & Normalization Gatekeeper
+                  </div>
+                  <span class="flow-stage-badge tag-blue">Ingestion Layer</span>
+                </div>
+                <div class="grid-2" style="gap: 12px;">
+                  <div class="flow-branch-desc">
+                    Accepts arbitrary formats (<strong>WAV, MP3, WebM, OGG, FLAC</strong>) via HTTP multipart upload or streaming endpoint.
+                  </div>
+                  <div class="flow-branch-desc">
+                    <strong>FFmpeg Universal Gatekeeper</strong> resamples audio to <code>16,000 Hz</code>, 1 channel (Mono), 16-bit Signed PCM, guaranteeing clean spectral alignment for downstream models.
+                  </div>
+                </div>
+                <div style="margin-top: 8px;">
+                  <span style="font-size: 0.72rem; color: var(--text-muted);">OUTPUT:</span>
+                  <span class="data-pill-code">Normalized 16kHz Mono PCM WAV Audio Buffer</span>
+                </div>
+              </div>
+
+              <!-- Arrow -->
+              <div class="flow-arrow-down">▼ Dispatched in Parallel to Local GPU Perception Layer (~3.0 GB VRAM) ▼</div>
+
+              <!-- STAGE 2: Concurrent Perception Layer -->
+              <div class="flow-stage-box" style="border-left: 4px solid var(--accent-purple);">
+                <div class="flow-stage-header">
+                  <div class="flow-stage-title">
+                    <span style="color: var(--accent-purple);">02</span> Concurrent Local Perception Layer (Parallel Execution)
+                  </div>
+                  <span class="flow-stage-badge tag-purple">GPU Worker Pool</span>
+                </div>
+                <div class="flow-branch-row">
+                  <!-- Branch ASR -->
+                  <div class="flow-branch-card">
+                    <div class="flow-branch-title" style="color: #93c5fd;">
+                      🎙️ Branch A: Continuous ASR (Faster-Whisper)
+                    </div>
+                    <p class="flow-branch-desc">
+                      • <strong>Model:</strong> <code>large-v3-turbo</code> (CTranslate2 CUDA <code>float16</code>)<br>
+                      • <strong>Silero VAD:</strong> Filters ambient noise & non-speech intervals<br>
+                      • <strong>Continuous 30s Window:</strong> Preserves global cross-attention (no hallucination loops)<br>
+                      • <strong>Word Timestamps:</strong> Emits precise token-level start and end seconds
+                    </p>
+                    <div style="margin-top: 8px;">
+                      <span class="data-pill-code">List[RawSegment] (words, timestamps, confidence)</span>
+                    </div>
+                  </div>
+
+                  <!-- Branch Diarization -->
+                  <div class="flow-branch-card">
+                    <div class="flow-branch-title" style="color: #d8b4fe;">
+                      👥 Branch B: Native Overlap Diarization (Pyannote 3.1)
+                    </div>
+                    <p class="flow-branch-desc">
+                      • <strong>Model:</strong> <code>speaker-diarization-community-1</code> (CUDA)<br>
+                      • <strong>Speaker Intervals:</strong> Voice embeddings clustered chronologically<br>
+                      • <strong>Native Overlaps:</strong> Extracts exact collision timestamps where multiple speakers spoke simultaneously<br>
+                      • <strong>Cross-talk Metrics:</strong> Prevents blind separation or dialogue loss
+                    </p>
+                    <div style="margin-top: 8px;">
+                      <span class="data-pill-code">SpeakerIntervals[] + Native OverlapIntervals[]</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Arrow -->
+              <div class="flow-arrow-down">▼ Merged into Domain Layer for Temporal Word-to-Speaker Alignment ▼</div>
+
+              <!-- STAGE 3: Domain Alignment & Chunking -->
+              <div class="flow-stage-box" style="border-left: 4px solid var(--accent-amber);">
+                <div class="flow-stage-header">
+                  <div class="flow-stage-title">
+                    <span style="color: var(--accent-amber);">03</span> Domain Alignment & Conversational Chunking (AlignmentService)
+                  </div>
+                  <span class="flow-stage-badge tag-amber">Pure Domain Logic</span>
+                </div>
+                <div class="grid-3" style="gap: 10px;">
+                  <div class="flow-branch-desc">
+                    <strong>1. Word-to-Speaker Mapping:</strong><br>
+                    Associates words to speakers using maximum temporal overlap duration with previous-speaker boundary fallback.
+                  </div>
+                  <div class="flow-branch-desc">
+                    <strong>2. Linguistic Boundary Healing:</strong><br>
+                    Corrects word leakage between speakers using punctuation and capital letters. <strong>Protects honorifics</strong> (<code>Mr.</code>, <code>Dr.</code>, <code>Ms.</code>).
+                  </div>
+                  <div class="flow-branch-desc">
+                    <strong>3. Overlap Attribution:</strong><br>
+                    Cross-references <code>OverlapIntervals</code> to tag <code>is_interruption</code>, <code>interrupted_by</code>, and splits turns on pauses $\ge 1.2\text{s}$.
+                  </div>
+                </div>
+                <div style="margin-top: 8px;">
+                  <span style="font-size: 0.72rem; color: var(--text-muted);">OUTPUT:</span>
+                  <span class="data-pill-code">List[DiarizedSegment] (speaker turns + word timing + cross-talk attributes)</span>
+                </div>
+              </div>
+
+              <!-- Arrow -->
+              <div class="flow-arrow-down">▼ Dispatched in Parallel to Bimodal Emotion Scorers ▼</div>
+
+              <!-- STAGE 4: Bimodal Emotion Scoring Layer -->
+              <div class="flow-stage-box" style="border-left: 4px solid var(--accent-emerald);">
+                <div class="flow-stage-header">
+                  <div class="flow-stage-title">
+                    <span style="color: var(--accent-emerald);">04</span> Bimodal Emotion Perception (Acoustic Tone + Cloud Dialogue Semantics)
+                  </div>
+                  <span class="flow-stage-badge tag-green">Bimodal Scoring</span>
+                </div>
+                <div class="flow-branch-row">
+                  <!-- Acoustic Scorer -->
+                  <div class="flow-branch-card">
+                    <div class="flow-branch-title" style="color: #34d399;">
+                      🌊 Path 4A: Acoustic SER (Emotion2Vec+)
+                    </div>
+                    <p class="flow-branch-desc">
+                      • <strong>Engine:</strong> FunASR <code>emotion2vec_plus_base</code><br>
+                      • <strong>Context Padding:</strong> Slices include <strong>350ms pre/post ambient audio</strong> to prevent onset distortion and spectral clicks<br>
+                      • <strong>Acoustic Features:</strong> Pitch inflection, energy envelope, spectral formants<br>
+                      • <strong>Predictions:</strong> Physical tone classification without semantic bias
+                    </p>
+                    <div style="margin-top: 8px;">
+                      <span class="data-pill-code">acoustic_emotion: [EmotionPrediction]</span>
+                    </div>
+                  </div>
+
+                  <!-- Semantic LLM Scorer -->
+                  <div class="flow-branch-card">
+                    <div class="flow-branch-title" style="color: #6ee7b7;">
+                      🧠 Path 4B: Contextual Semantic LLM (Qwen 72B)
+                    </div>
+                    <p class="flow-branch-desc">
+                      • <strong>Engine:</strong> <code>Qwen 2.5 72B</code> via OpenRouter (or local <code>DistilRoBERTa</code> fallback)<br>
+                      • <strong>Single Batched JSON:</strong> Full conversation chronology dispatched in one single prompt<br>
+                      • <strong>Narrative Arc:</strong> Detects passive-aggression, polite frustration, and customer relief<br>
+                      • <strong>Sarcasm-Aware:</strong> Distinguishes mock gratitude from genuine happiness
+                    </p>
+                    <div style="margin-top: 8px;">
+                      <span class="data-pill-code">semantic_emotion: [EmotionPrediction]</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Arrow -->
+              <div class="flow-arrow-down">▼ Calibrated & Fused in Affect Dynamics Engine ▼</div>
+
+              <!-- STAGE 5: Affect Dynamics & Bimodal Fusion -->
+              <div class="flow-stage-box" style="border-left: 4px solid var(--accent-rose);">
+                <div class="flow-stage-header">
+                  <div class="flow-stage-title">
+                    <span style="color: var(--accent-rose);">05</span> Affect Dynamics & Bimodal Conflict Fusion (AffectEvaluator)
+                  </div>
+                  <span class="flow-stage-badge tag-rose">Affect Dynamics</span>
+                </div>
+                <div class="grid-4" style="gap: 10px;">
+                  <div class="flow-branch-card" style="padding: 10px;">
+                    <div style="font-size: 0.78rem; font-weight: bold; color: #fb7185;">1. Question Normalization</div>
+                    <p class="flow-branch-desc">Rising pitch in polite questions (<em>"Would that work?"</em>) demoted from false ANGRY to NEUTRAL.</p>
+                  </div>
+                  <div class="flow-branch-card" style="padding: 10px;">
+                    <div style="font-size: 0.78rem; font-weight: bold; color: #fde68a;">2. High-Arousal Disambig</div>
+                    <p class="flow-branch-desc">Near-ties between ANGRY and HAPPY resolved using semantic context (enthusiasm promotion).</p>
+                  </div>
+                  <div class="flow-branch-card" style="padding: 10px;">
+                    <div style="font-size: 0.78rem; font-weight: bold; color: #60a5fa;">3. Affective Inertia</div>
+                    <p class="flow-branch-desc">Transient spikes ($\le 1.8\text{s}$) surrounded by calm dialogue turns smoothed to NEUTRAL.</p>
+                  </div>
+                  <div class="flow-branch-card" style="padding: 10px;">
+                    <div style="font-size: 0.78rem; font-weight: bold; color: #c084fc;">4. Conflict Matrix</div>
+                    <p class="flow-branch-desc">Cross-modal valence clash flags Hostile Sarcasm, Masking, and Customer Resignation.</p>
+                  </div>
+                </div>
+                <div style="margin-top: 8px;">
+                  <span style="font-size: 0.72rem; color: var(--text-muted);">OUTPUT:</span>
+                  <span class="data-pill-code">List[TimelineEvent] (synchronized start, end, speaker, bimodal scores, conflict flags)</span>
+                </div>
+              </div>
+
+              <!-- Arrow -->
+              <div class="flow-arrow-down">▼ Aggregated into AudioResponse & Dispatched to Decision Agents ▼</div>
+
+              <!-- STAGE 6: Response & Downstream Agents -->
+              <div class="flow-stage-box" style="border-left: 4px solid var(--accent-cyan);">
+                <div class="flow-stage-header">
+                  <div class="flow-stage-title">
+                    <span style="color: var(--accent-cyan);">06</span> Consolidated Output & LangGraph Autonomous Decision Brain
+                  </div>
+                  <span class="flow-stage-badge tag-blue">Decision Brain</span>
+                </div>
+                <div class="grid-2" style="gap: 12px;">
+                  <div>
+                    <div style="font-size: 0.8rem; font-weight: bold; color: #93c5fd; margin-bottom: 4px;">Synchronized AudioResponse Payload:</div>
+                    <p class="flow-branch-desc">
+                      Compiles <code>overall_transcript</code>, chronological <code>timeline</code>, and high-level <code>AgentSynthesis</code> (primary speaker sentiments, active cut-in counts, total overtalk seconds, and escalation alerts).
+                    </p>
+                  </div>
+                  <div>
+                    <div style="font-size: 0.8rem; font-weight: bold; color: #c084fc; margin-bottom: 4px;">Downstream LangGraph Agent State Machine:</div>
+                    <p class="flow-branch-desc">
+                      • <strong>Node 1: Call QA & Compliance Auditor:</strong> Evaluates agent script adherence & hold etiquette<br>
+                      • <strong>Conditional Router:</strong> Escalation or Hostile Sarcasm detected?<br>
+                      • <strong>Node 2: Root-Cause Friction Diagnostic ➔ Urgent Supervisor Alert</strong><br>
+                      • <strong>Node 3: Auto-Summary & CRM Ticket Generation (Salesforce/Zendesk)</strong>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- TAB 2: Data Transformation Pipeline -->
+          <div class="tab-pane" id="flow-tab-data">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Pipeline Stage</th>
+                  <th>Input Schema / Artifact</th>
+                  <th>Core Algorithm / Operation</th>
+                  <th>Output Schema / Contract</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>1. Ingestion</strong></td>
+                  <td>Raw Audio File (WAV, MP3, WebM, OGG)</td>
+                  <td>FFmpeg resample (16kHz, mono, 16-bit PCM)</td>
+                  <td><code>temp_audio/*.wav</code> (16kHz PCM Buffer)</td>
+                </tr>
+                <tr>
+                  <td><strong>2A. Whisper ASR</strong></td>
+                  <td>16kHz PCM Audio Stream</td>
+                  <td>Continuous 30s cross-attention + Silero VAD</td>
+                  <td><code>List[RawSegment]</code> (tokens + timestamps)</td>
+                </tr>
+                <tr>
+                  <td><strong>2B. Pyannote Diarization</strong></td>
+                  <td>16kHz PCM Audio Stream</td>
+                  <td>Acoustic clustering + Native overlap detection</td>
+                  <td><code>SpeakerIntervals[]</code> & <code>OverlapIntervals[]</code></td>
+                </tr>
+                <tr>
+                  <td><strong>3. Alignment Service</strong></td>
+                  <td><code>RawSegment[]</code> + <code>SpeakerInterval[]</code></td>
+                  <td>Temporal overlap matching, pause splitting ($\ge 1.2\text{s}$), abbreviation protection</td>
+                  <td><code>List[DiarizedSegment]</code> (with interruption tags)</td>
+                </tr>
+                <tr>
+                  <td><strong>4A. Acoustic SER</strong></td>
+                  <td>Slices with 350ms pre/post ambient padding</td>
+                  <td>Emotion2Vec+ physical pitch, energy, formants</td>
+                  <td><code>List[EmotionPrediction]</code> (Acoustic valence)</td>
+                </tr>
+                <tr>
+                  <td><strong>4B. Semantic LLM</strong></td>
+                  <td>Single batched chronological dialogue JSON</td>
+                  <td>Qwen 2.5 72B contextual narrative classification</td>
+                  <td><code>List[EmotionPrediction]</code> (Contextual semantic)</td>
+                </tr>
+                <tr>
+                  <td><strong>5. Affect Dynamics</strong></td>
+                  <td>Bimodal emotion pairs + text + timing</td>
+                  <td>Affective inertia smoothing, question normalization, conflict matrix</td>
+                  <td><code>List[TimelineEvent]</code> (calibrated emotions & flags)</td>
+                </tr>
+                <tr>
+                  <td><strong>6. Synthesis</strong></td>
+                  <td>All timeline events + speaker list</td>
+                  <td>Interruption aggregation, overtalk ratio, escalation check</td>
+                  <td><code>AudioResponse</code> JSON (REST API payload)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- TAB 3: Execution & Concurrency -->
+          <div class="tab-pane" id="flow-tab-runtime">
+            <div class="grid-2" style="margin-top: 10px;">
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-icon icon-blue">⚡</div>
+                  <div class="card-title">FastAPI Lifespan & Thread Offloading</div>
+                </div>
+                <ul class="card-list">
+                  <li><strong>Lifespan Context Manager:</strong> Models are instantiated once at application startup and cached in <code>app.state.orchestrator</code>, avoiding re-loading overhead per request.</li>
+                  <li><strong>Async Worker Threadpool:</strong> Heavy synchronous CUDA pipelines run inside <code>asyncio.to_thread(self._process_synchronous, file_path)</code>, preventing blocking of the async event loop.</li>
+                  <li><strong>Single-Roundtrip Cloud Batching:</strong> All 40+ turns of a conversation are batched into one single HTTP request to OpenRouter, returning in ~1.5s rather than 40 sequential roundtrips.</li>
+                </ul>
+              </div>
+
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-icon icon-purple">🧩</div>
+                  <div class="card-title">Hexagonal Factory Pattern</div>
+                </div>
+                <ul class="card-list">
+                  <li><strong>Central Factory (<code>core/factory.py</code>):</strong> Reads <code>.env</code> variables (<code>WHISPER_MODEL</code>, <code>SEMANTIC_ENGINE</code>, <code>DEVICE</code>) and instantiates the matching adapter.</li>
+                  <li><strong>Zero-Cloud Fallback:</strong> If <code>OPENROUTER_API_KEY</code> is absent, gracefully switches to local <code>DistilRoBERTa</code> semantic classification.</li>
+                  <li><strong>Instant Mockability:</strong> In-memory mock adapters (<code>MockASR</code>, <code>MockDiarizer</code>, <code>MockSemanticScorer</code>) enable instant unit testing without GPU weights.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- ================= SLIDE 4: Hexagonal Architecture (Ports & Adapters) ================= -->
+      <section class="slide" data-category="Architecture" data-title="Hexagonal Ports & Adapters">
+        <div class="slide-title-group">
+          <div class="slide-tag">Software Design Pattern</div>
+          <h2 class="slide-title">Hexagonal (Ports & Adapters) Architecture</h2>
+          <p class="slide-subtitle">Decoupling hardware-bound ML models from domain business logic ensures effortless testing, mockability, and zero vendor lock-in.</p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-purple">🔌</div>
+              <div>
+                <div class="card-title">Pure Python Ports (Interfaces)</div>
+                <div class="card-subtitle"><code>app/interfaces/__init__.py</code></div>
+              </div>
+            </div>
+            <p class="card-body" style="margin-bottom: 10px;">
+              Strict abstract protocols that define contracts without referencing any deep learning library:
+            </p>
+            <ul class="card-list">
+              <li><code>BaseASR</code>: <code>transcribe(file_path, beam_size, vad_filter) -> List[RawSegment]</code></li>
+              <li><code>BaseDiarizer</code>: <code>diarize_with_overlaps(file_path) -> (SpeakerIntervals, OverlapIntervals)</code></li>
+              <li><code>BaseSemanticScorer</code>: <code>score_dialogue_turns(turns) -> List[EmotionPrediction]</code></li>
+              <li><code>BaseAcousticScorer</code>: <code>score_audio_slices(file_path, segments) -> List[EmotionPrediction]</code></li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-cyan">🧩</div>
+              <div>
+                <div class="card-title">Pluggable Concrete Adapters</div>
+                <div class="card-subtitle"><code>app/adapters/*</code></div>
+              </div>
+            </div>
+            <p class="card-body" style="margin-bottom: 10px;">
+              Easily swapped via <code>.env</code> settings through the central <code>app/core/factory.py</code>:
+            </p>
+            <ul class="card-list">
+              <li><strong>ASR Adapters:</strong> <code>FasterWhisperASRAdapter</code> | <code>MockASRAdapter</code></li>
+              <li><strong>Diarizer Adapters:</strong> <code>PyannoteDiarizerAdapter</code> | <code>MockDiarizerAdapter</code></li>
+              <li><strong>Semantic Adapters:</strong> <code>QwenSemanticAdapter</code> (OpenRouter) | <code>DistilRoBERTaAdapter</code> | <code>MockSemanticScorer</code></li>
+              <li><strong>Acoustic Adapters:</strong> <code>Emotion2VecAcousticAdapter</code> | <code>MockAcousticScorer</code></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 15px; border-left: 4px solid var(--accent-emerald);">
+          <div class="card-title" style="font-size: 0.95rem; color: #34d399; margin-bottom: 4px;">⚡ Instant Automated Test Suite</div>
+          <div class="card-body">
+            Because domain logic (Alignment, Sarcasm Fusion, Affective Inertia) only talks to interfaces, the entire pipeline test suite runs <strong>18 comprehensive unit tests in 0.12 seconds</strong> using fast in-memory mocks without needing a GPU or downloading gigabytes of weights.
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 5: Technologies & Models Used ================= -->
+      <section class="slide" data-category="Tech Stack" data-title="Deep Dive: Models & Libraries">
+        <div class="slide-title-group">
+          <div class="slide-tag">Comprehensive Stack Breakdown</div>
+          <h2 class="slide-title">What Models and Technologies Were Used</h2>
+          <p class="slide-subtitle">Carefully selected best-in-class components for optimal throughput, accuracy, and operational memory economy.</p>
+        </div>
+
+        <div class="grid-3" style="margin-top: 10px;">
+          <!-- Faster Whisper -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-blue">⚡</div>
+              <div>
+                <div class="card-title">Faster-Whisper</div>
+                <div class="card-subtitle">ASR Engine</div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Model:</strong> <code>large-v3-turbo</code></li>
+              <li><strong>Backend:</strong> CTranslate2 (CUDA <code>float16</code>)</li>
+              <li><strong>Speedup:</strong> 4x faster than vanilla OpenAI Whisper</li>
+              <li><strong>VAD:</strong> Integrated Silero Voice Activity Filter</li>
+              <li><strong>Features:</strong> Exact word-level timestamps</li>
+            </ul>
+          </div>
+
+          <!-- Pyannote Diarization -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-purple">👥</div>
+              <div>
+                <div class="card-title">Pyannote.Audio</div>
+                <div class="card-subtitle">Speaker Diarization</div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Model:</strong> <code>speaker-diarization-community-1</code></li>
+              <li><strong>Native Overlaps:</strong> Overlapped speech detection</li>
+              <li><strong>Clustering:</strong> Automatic or bounded speaker sets</li>
+              <li><strong>Platform:</strong> PyTorch on CUDA / TorchCodec</li>
+              <li><strong>Attribution:</strong> Cross-talk intervals extracted</li>
+            </ul>
+          </div>
+
+          <!-- Emotion2Vec -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-cyan">🌊</div>
+              <div>
+                <div class="card-title">Emotion2Vec+</div>
+                <div class="card-subtitle">Acoustic Tone SER</div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Source:</strong> Alibaba FunASR Project</li>
+              <li><strong>Model:</strong> <code>emotion2vec_plus_base</code></li>
+              <li><strong>Features:</strong> Pitch, Energy, Jitter, Spectral Formants</li>
+              <li><strong>Context:</strong> 350ms pre/post ambient padding</li>
+              <li><strong>Device:</strong> CUDA / CPU execution</li>
+            </ul>
+          </div>
+
+          <!-- Qwen via OpenRouter -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-emerald">🤖</div>
+              <div>
+                <div class="card-title">Qwen 2.5 72B / 27B</div>
+                <div class="card-subtitle">Cloud Dialogue LLM</div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Provider:</strong> OpenRouter API</li>
+              <li><strong>Prompting:</strong> Single batched conversation JSON</li>
+              <li><strong>Context Arc:</strong> Detects passive aggression & sarcasm</li>
+              <li><strong>Fallback:</strong> Local DistilRoBERTa classifier</li>
+              <li><strong>Latency:</strong> ~1.5s for 40+ conversational turns</li>
+            </ul>
+          </div>
+
+          <!-- Backend Framework -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-amber">⚙️</div>
+              <div>
+                <div class="card-title">FastAPI & Python 3.13</div>
+                <div class="card-subtitle">High-Concurreny API</div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Server:</strong> Uvicorn ASGI with thread offloading</li>
+              <li><strong>Validation:</strong> Pydantic v2 Settings & Schemas</li>
+              <li><strong>Audio Gatekeeper:</strong> WinGet FFmpeg Shared DLLs</li>
+              <li><strong>Lifecycle:</strong> Lifespan model cache (loaded once)</li>
+              <li><strong>Packaging:</strong> <code>uv</code> package manager</li>
+            </ul>
+          </div>
+
+          <!-- Interactive Client Studio -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-rose">💻</div>
+              <div>
+                <div class="card-title">Interactive Audio Studio</div>
+                <div class="card-subtitle">Client Experience HUD</div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Audio Engine:</strong> In-browser 16kHz PCM WAV encoder</li>
+              <li><strong>HUD:</strong> Real-time synchronized scrubber & player</li>
+              <li><strong>Visualizer:</strong> Interactive audio waveform rendering</li>
+              <li><strong>Analytics:</strong> Speaker badges & conflict alerts</li>
+              <li><strong>Synthesis:</strong> Executive briefing & anomaly display</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 6: Hardware Budget & Memory Engineering ================= -->
+      <section class="slide" data-category="Hardware & Performance" data-title="VRAM Budget & Hardware Sizing">
+        <div class="slide-title-group">
+          <div class="slide-tag">Resource Optimization</div>
+          <h2 class="slide-title">Hardware Budget & VRAM Allocation</h2>
+          <p class="slide-subtitle">Intelligently balancing on-premise perception with cloud cognitive reasoning to fit comfortably within consumer/edge GPU memory limits.</p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 12px;">
+          <div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Model / Engine</th>
+                  <th>Device / Precision</th>
+                  <th>VRAM Usage</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>ASR (Speech-to-Text)</strong></td>
+                  <td>Faster-Whisper (Turbo)</td>
+                  <td>CUDA (<code>float16</code>)</td>
+                  <td><span class="tag-badge tag-blue">~1.5 GB</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Speaker Diarization</strong></td>
+                  <td>Pyannote Community-1</td>
+                  <td>CUDA (<code>float16</code>)</td>
+                  <td><span class="tag-badge tag-purple">~1.5 GB</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Acoustic Emotion</strong></td>
+                  <td>Emotion2Vec+ Base</td>
+                  <td>CUDA / CPU</td>
+                  <td><span class="tag-badge tag-cyan">~0.5 GB</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Dialogue LLM</strong></td>
+                  <td>Qwen 2.5 72B</td>
+                  <td>Cloud (OpenRouter)</td>
+                  <td><span class="tag-badge tag-green">0.0 GB (Cloud)</span></td>
+                </tr>
+                <tr style="background: rgba(30, 41, 59, 0.9); font-weight: bold;">
+                  <td colspan="3" style="color: #fff;">TOTAL LOCAL VRAM CONSUMED</td>
+                  <td style="color: #34d399; font-size: 1rem;">~3.5 GB</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="card" style="margin-top: 14px; background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.3);">
+              <div class="card-title" style="color: #34d399; font-size: 0.9rem;">✅ Lightweight VRAM Footprint</div>
+              <p class="card-body" style="font-size: 0.8rem;">
+                With only <strong>~3.5 GB</strong> of total local VRAM consumed, any modern GPU with <strong>≥ 4 GB to 6 GB VRAM</strong> is fully sufficient for single-stream execution. Additional VRAM provides headroom for concurrent call streams or larger batch sizes.
+              </p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-blue">⚡</div>
+              <div class="card-title">Engineering Sizing Decisions</div>
+            </div>
+            <ul class="card-list" style="font-size: 0.85rem;">
+              <li>
+                <strong>Why Cloud Qwen 72B over Local 7B?</strong><br>
+                A local 7B model would take 5-6 GB VRAM and struggle with subtle corporate sarcasm. Offloading to Qwen 72B via OpenRouter costs &lt;$0.001 per call, uses 0 GB local VRAM, and evaluates 40 dialogue turns in a single 1.5s network request.
+              </li>
+              <li>
+                <strong>CTranslate2 vs PyTorch Whisper:</strong><br>
+                CTranslate2 provides custom kernel execution for transformer attention, reducing Whisper's VRAM requirement by 60% and inference latency by 4x.
+              </li>
+              <li>
+                <strong>Lifespan Context Manager:</strong><br>
+                FastAPI's <code>@asynccontextmanager</code> initializes models exactly once during application boot, avoiding re-instantiation overhead on subsequent HTTP requests.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 7: Algorithmic Innovations ================= -->
+      <section class="slide" data-category="Algorithms & Signal" data-title="Domain & Signal Innovations">
+        <div class="slide-title-group">
+          <div class="slide-tag">Core Technical Innovations</div>
+          <h2 class="slide-title">Algorithmic Engineering in the Alignment Layer</h2>
+          <p class="slide-subtitle">Raw model outputs are noisy. Our domain services transform raw timestamps into coherent conversational intelligence.</p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-purple">🛡️</div>
+              <div class="card-title">1. Honorific & Boundary Protection</div>
+            </div>
+            <p class="card-body">
+              Standard NLP sentence splitters break upon seeing a period. Our <code>AlignmentService</code> explicitly protects abbreviations:
+            </p>
+            <div class="code-box" style="margin-top: 8px;">
+              // Protected Honorifics Regex:<br>
+              r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr)\.\s*$'<br>
+              // Prevents "Hello Dr. Smith" from prematurely cutting the turn.
+            </div>
+            <ul class="card-list" style="margin-top: 8px;">
+              <li><strong>Natural Pause Splitting:</strong> Silences $\ge 1.2\text{s}$ cleanly mark turn breaks.</li>
+              <li><strong>Punctuation Boundary Healing:</strong> Corrects speaker attribution leaks at turn edges using linguistic syntax cues.</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-amber">⏳</div>
+              <div class="card-title">2. Conversational Affective Inertia</div>
+            </div>
+            <p class="card-body">
+              Human emotional states have persistence. Transient acoustic blips do not mean true emotional shifts:
+            </p>
+            <div class="code-box" style="margin-top: 8px;">
+              if duration &le; 1.8s and curr_acoustic == ANGRY:<br>
+              &nbsp;&nbsp;if prev_turn == CALM and next_turn == CALM and text_is_calm:<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;curr_acoustic = NEUTRAL // Inertia Smoothing
+            </div>
+            <ul class="card-list" style="margin-top: 8px;">
+              <li>Eliminates false 1-second <code>ANGRY</code> spikes caused by coughing, sneezes, or receiver clicks.</li>
+              <li>Maintains high sensitivity to sustained agitation.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-cyan">🎙️</div>
+              <div class="card-title">3. 350ms Symmetric Context Padding</div>
+            </div>
+            <p class="card-body">
+              Slicing audio tightly at word boundaries creates high-frequency spectral clicks and cuts off voice attack formants. Slices fed into <strong>Emotion2Vec+</strong> incorporate <strong>350ms of ambient pre-roll and post-roll</strong>, boosting acoustic SER stability.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-rose">❓</div>
+              <div class="card-title">4. Question-Intonation Normalization</div>
+            </div>
+            <p class="card-body">
+              Polite inquiries (<em>"Would that still work for you?"</em>) feature rising pitch that acoustic models falsely flag as high-arousal Anger. When text is interrogative (ends with '?') and semantically neutral, the acoustic label is normalized to <strong>NEUTRAL</strong>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 8: Overlap & Interruption Attribution ================= -->
+      <section class="slide" data-category="Algorithms & Signal" data-title="Conversational Overlap Intelligence">
+        <div class="slide-title-group">
+          <div class="slide-tag">Native Cross-Talk Modeling</div>
+          <h2 class="slide-title">Overlap Tracking: Who Interrupted Whom</h2>
+          <p class="slide-subtitle">Rather than forcing blind source separation or discarding overlap, our platform treats speech collisions as premier behavioral indicators.</p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-rose">⚡</div>
+              <div class="card-title">The Interruption Detection Algorithm</div>
+            </div>
+            <p class="card-body">
+              Using Pyannote's <code>diarize_with_overlaps()</code>, intervals where multiple speakers are simultaneously active are identified.
+            </p>
+            <div class="code-box" style="margin-top: 10px;">
+              For each speaker turn [S_start, S_end]:<br>
+              &nbsp;&nbsp;If OverlapInterval [O_start, O_end] intersects [S_start, S_end]:<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;overlap_duration = min(S_end, O_end) - max(S_start, O_start)<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;if S_start > other_speaker_start:<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;is_interruption = TRUE<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;interrupted_by = current_speaker
+            </div>
+            <ul class="card-list" style="margin-top: 10px;">
+              <li>Attributed at both turn and session level.</li>
+              <li>Calculates global <code>overtalk_ratio = overlap_sec / total_speech_sec</code>.</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-emerald">📊</div>
+              <div class="card-title">High-Value Contact Center Metrics</div>
+            </div>
+            <div class="grid-2" style="gap: 10px; margin-top: 10px;">
+              <div class="card" style="background: #1e293b; padding: 12px;">
+                <div style="font-size: 0.75rem; color: #94a3b8;">INTERRUPTION COUNT</div>
+                <div style="font-size: 1.4rem; font-weight: bold; color: #f43f5e;">Active Cut-ins</div>
+                <div style="font-size: 0.75rem; color: #cbd5e1; margin-top: 4px;">Flags aggressive agents or frustrated callers speaking over each other.</div>
+              </div>
+              <div class="card" style="background: #1e293b; padding: 12px;">
+                <div style="font-size: 0.75rem; color: #94a3b8;">OVERTALK RATIO</div>
+                <div style="font-size: 1.4rem; font-weight: bold; color: #f59e0b;">Speech Competition</div>
+                <div style="font-size: 0.75rem; color: #cbd5e1; margin-top: 4px;">Quantifies cross-talk density across the total dialogue duration.</div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 12px; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3);">
+              <div class="card-title" style="font-size: 0.85rem; color: #93c5fd;">Escalation Trigger Logic</div>
+              <p class="card-body" style="font-size: 0.8rem;">
+                When an utterance has <code>is_interruption == True</code> combined with <code>ANGRY</code> acoustic tone or <code>DISGUST</code>, the system triggers immediate escalation flags in the executive summary card.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 9: Multimodal Fusion & Conflict Detection ================= -->
+      <section class="slide" data-category="Affective Dynamics" data-title="Bimodal Emotion Fusion Matrix">
+        <div class="slide-title-group">
+          <div class="slide-tag">Cross-Modal Reasoning</div>
+          <h2 class="slide-title">Bimodal Emotion Fusion: Text vs. Tone Matrix</h2>
+          <p class="slide-subtitle">How AffectEvaluator detects emotional incongruence, hostility masking, and genuine satisfaction.</p>
+        </div>
+
+        <table class="data-table" style="margin-top: 10px;">
+          <thead>
+            <tr>
+              <th>Semantic Sentiment (Qwen 72B)</th>
+              <th>Acoustic Tone (Emotion2Vec+)</th>
+              <th>Unified Classification</th>
+              <th>Conversational Interpretation</th>
+              <th>System Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="tag-badge tag-green">HAPPY</span> <em>("Oh wonderful service")</em></td>
+              <td><span class="tag-badge tag-rose">ANGRY / TENSE</span></td>
+              <td><strong style="color: #fb7185;">Hostile Sarcasm / Incongruence</strong></td>
+              <td>Customer is deeply dissatisfied but using mocking or sarcastic politeness.</td>
+              <td><span class="tag-badge tag-rose">Flag Supervisor Urgent</span></td>
+            </tr>
+            <tr>
+              <td><span class="tag-badge tag-rose">ANGRY</span> <em>("I can't believe this")</em></td>
+              <td><span class="tag-badge tag-green">HAPPY / LAUGHING</span></td>
+              <td><strong style="color: #fde68a;">Nervous Masking / Blended Affect</strong></td>
+              <td>Nervous laugh during bad news; customer is stressed rather than amused.</td>
+              <td><span class="tag-badge tag-amber">Highlight Ambiguity</span></td>
+            </tr>
+            <tr>
+              <td><span class="tag-badge tag-blue">NEUTRAL</span> <em>("Okay I will wait")</em></td>
+              <td><span class="tag-badge tag-purple">SAD / TIRED</span></td>
+              <td><strong style="color: #c084fc;">Customer Resignation</strong></td>
+              <td>Passive surrender; customer is losing patience and prone to churn.</td>
+              <td><span class="tag-badge tag-purple">Flag Retention Risk</span></td>
+            </tr>
+            <tr>
+              <td><span class="tag-badge tag-green">HAPPY</span> <em>("That resolved my issue")</em></td>
+              <td><span class="tag-badge tag-green">HAPPY / CALM</span></td>
+              <td><strong style="color: #34d399;">Congruent Satisfaction</strong></td>
+              <td>Genuine positive resolution; text and tone agree with high confidence.</td>
+              <td><span class="tag-badge tag-green">Positive CSAT Log</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-cyan">🎯</div>
+              <div class="card-title">Ambiguity Margin Detection</div>
+            </div>
+            <p class="card-body">
+              If the difference between the top-1 and top-2 emotion probabilities is $\le 0.15$ and the top score is below $0.65$, <code>AffectEvaluator</code> flags the utterance as <code>is_ambiguous = True</code>, preventing false overconfident classifications.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-emerald">✨</div>
+              <div class="card-title">Single Roundtrip Batching</div>
+            </div>
+            <p class="card-body">
+              Instead of firing 30 sequential API calls for 30 speech segments, the orchestrator compiles all dialogue turns into one structured JSON payload. Qwen evaluates the entire conversational timeline at once, preserving temporal context.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 10: Client Audio Studio HUD ================= -->
+      <section class="slide" data-category="Client Experience" data-title="Audio Studio & HUD">
+        <div class="slide-title-group">
+          <div class="slide-tag">Interactive Client Studio</div>
+          <h2 class="slide-title">Client Experience: Real-time Audio HUD</h2>
+          <p class="slide-subtitle">Interactive web audio studio delivering sub-second responsiveness, real-time waveform scrubbing, and synchronized dialogue playback.</p>
+        </div>
+
+        <div class="grid-3" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-rose">🎙️</div>
+              <div class="card-title">Studio Recorder</div>
+            </div>
+            <p class="card-body">
+              In-browser microphone capture using Web Audio API with a custom client-side <strong>16kHz PCM WAV encoder</strong> (<code>wav-encoder.ts</code>). Formats directly matching the backend's expected sampling rate without external dependencies.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-blue">🎛️</div>
+              <div class="card-title">Audio Player HUD</div>
+            </div>
+            <p class="card-body">
+              Custom HTML5 audio engine with interactive scrubber, playback speed controls, and a canvas-based <strong>Waveform Visualizer</strong>. Clicking any dialogue turn or emotion card automatically seeks audio to the exact second.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-purple">💬</div>
+              <div class="card-title">Synchronized Transcript</div>
+            </div>
+            <p class="card-body">
+              Speaker-badged dialogue stream displaying word-level synchronization, timeline cards with confidence score meters, conflict warnings (Hostile Sarcasm, Masking), and overlap duration badges.
+            </p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 15px;">
+          <div class="card-header">
+            <div class="card-icon icon-emerald">📋</div>
+            <div class="card-title">Agent Synthesis Card (Executive Briefing)</div>
+          </div>
+          <div class="grid-3" style="margin-top: 8px;">
+            <div style="font-size: 0.85rem; color: #cbd5e1;">
+              <strong>Global Sentiment Summary:</strong> Automatically generates concise narrative synthesis and primary sentiment per speaker (e.g. SPEAKER_00: ANGRY, SPEAKER_01: NEUTRAL).
+            </div>
+            <div style="font-size: 0.85rem; color: #cbd5e1;">
+              <strong>Cross-Talk Analytics:</strong> Displays active cut-in count, total overlapping seconds, and total over-talk percentage.
+            </div>
+            <div style="font-size: 0.85rem; color: #cbd5e1;">
+              <strong>Anomaly Warning List:</strong> Direct clickable timestamps for every detected semantic/tone clash and supervisory escalation.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SLIDE 11: Summary & Future Roadmap ================= -->
+      <section class="slide" data-category="Conclusion" data-title="Summary & LangGraph Roadmap">
+        <div class="slide-title-group">
+          <div class="slide-tag">Platform Summary & Downstream Brain</div>
+          <h2 class="slide-title">Summary & LangGraph Agent Integration</h2>
+          <p class="slide-subtitle">A production-grade foundation ready for autonomous call auditing, CRM automation, and supervisor alerting.</p>
+        </div>
+
+        <div class="grid-2" style="margin-top: 15px;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-blue">🏆</div>
+              <div class="card-title">What We Delivered</div>
+            </div>
+            <ul class="card-list">
+              <li><strong>Continuous ASR:</strong> Whisper large-v3-turbo with zero truncation hallucination.</li>
+              <li><strong>Native Diarization:</strong> Pyannote community-1 tracking speaker turns and multi-speaker interruptions.</li>
+              <li><strong>Acoustic SER:</strong> Emotion2Vec+ with 350ms ambient padding & affective inertia.</li>
+              <li><strong>Contextual Semantics:</strong> Qwen 2.5 72B via OpenRouter for sarcasm-aware dialogue reasoning.</li>
+              <li><strong>Hardware Efficiency:</strong> Lightweight ~3.5 GB local VRAM footprint (recommended ≥ 4-6 GB VRAM).</li>
+              <li><strong>Modular Codebase:</strong> Hexagonal ports & adapters with 18 automated tests running in 0.12s.</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon icon-purple">🤖</div>
+              <div class="card-title">LangGraph Downstream Decision Brain</div>
+            </div>
+            <p class="card-body" style="margin-bottom: 8px;">
+              The rich <code>AudioResponse</code> JSON feeds directly into a LangGraph state machine:
+            </p>
+            <ul class="card-list">
+              <li><strong>Node 1: Call QA & Compliance Auditor:</strong> Evaluates hold etiquette, mandatory disclosures, and agent politeness scripts.</li>
+              <li><strong>Conditional Routing:</strong> If escalation or hostile sarcasm is flagged, routes to the Friction Diagnostic node; otherwise routes to auto-summary.</li>
+              <li><strong>Node 2: Root-Cause Friction Diagnostic:</strong> Identifies billing disputes or technical blockers causing friction.</li>
+              <li><strong>Node 3: Automated CRM Ticket:</strong> Dispatches ticket generation to Salesforce / Zendesk with structured sentiment tags.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 15px; text-align: center; background: linear-gradient(135deg, rgba(37, 99, 235, 0.15), rgba(139, 92, 246, 0.15)); border-color: rgba(59, 130, 246, 0.4);">
+          <div class="card-title" style="color: #93c5fd; font-size: 1.1rem; margin-bottom: 4px;">Ready for Enterprise Contact Centers & Telephony Intelligence</div>
+          <p class="card-body" style="font-size: 0.88rem; color: #cbd5e1;">
+            End-to-end multimodal perception bridging raw acoustic physics and advanced contextual language intelligence.
+          </p>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Controls & Keybindings Bar -->
+    <footer class="deck-footer">
+      <div class="controls-left">
+        <button class="nav-btn" id="prevBtn" title="Previous Slide (Left Arrow)">◀ Previous</button>
+        <button class="nav-btn btn-primary" id="nextBtn" title="Next Slide (Right Arrow or Space)">Next ▶</button>
+        <button class="nav-btn" id="overviewBtn" title="Slide Overview Grid (O)">≡ Overview</button>
+      </div>
+
+      <div class="controls-right">
+        <span style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">
+          Keys: [←/→] Navigate • [Space] Next • [F] Fullscreen • [O] Grid
+        </span>
+        <button class="icon-btn" id="fullscreenBtn" title="Toggle Fullscreen (F)">⛶</button>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Slide Overview Modal -->
+  <div class="overview-modal" id="overviewModal">
+    <div class="overview-content">
+      <div class="overview-header">
+        <h3 style="font-size: 1.1rem; color: #fff;">Slide Index & Quick Jump</h3>
+        <button class="icon-btn" id="closeOverviewBtn">✕</button>
+      </div>
+      <div class="overview-grid" id="overviewGrid">
+        <!-- Injected via JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    let currentSlide = 0;
+
+    const slideIndicator = document.getElementById('slideIndicator');
+    const slideCategory = document.getElementById('slideCategory');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const overviewBtn = document.getElementById('overviewBtn');
+    const closeOverviewBtn = document.getElementById('closeOverviewBtn');
+    const overviewModal = document.getElementById('overviewModal');
+    const overviewGrid = document.getElementById('overviewGrid');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const presentationFrame = document.getElementById('presentationFrame');
+    const slideViewport = document.getElementById('slideViewport');
+
+    // Populate Overview Grid
+    slides.forEach((slide, index) => {
+      const title = slide.dataset.title || `Slide ${index + 1}`;
+      const cat = slide.dataset.category || 'General';
+      const card = document.createElement('div');
+      card.className = `overview-card ${index === 0 ? 'active-slide' : ''}`;
+      card.innerHTML = `
+        <span class="overview-num">SLIDE ${String(index + 1).padStart(2, '0')}</span>
+        <div class="overview-title">${title}</div>
+        <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 2px;">${cat}</div>
+      `;
+      card.addEventListener('click', () => {
+        goToSlide(index);
+        closeOverview();
+      });
+      overviewGrid.appendChild(card);
+    });
+
+    function updateSlide() {
+      slides.forEach((slide, idx) => {
+        slide.classList.toggle('active', idx === currentSlide);
+      });
+
+      // Update Header Info
+      const activeSlideElem = slides[currentSlide];
+      slideIndicator.textContent = `${String(currentSlide + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+      slideCategory.textContent = activeSlideElem.dataset.category || '';
+
+      // Update Navigation Button States
+      prevBtn.disabled = currentSlide === 0;
+      nextBtn.disabled = currentSlide === slides.length - 1;
+
+      // Update Overview Active Card
+      const overviewCards = overviewGrid.querySelectorAll('.overview-card');
+      overviewCards.forEach((c, idx) => {
+        c.classList.toggle('active-slide', idx === currentSlide);
+      });
+
+      // Scroll viewport back to top on slide change
+      slideViewport.scrollTop = 0;
+    }
+
+    function nextSlide() {
+      if (currentSlide < slides.length - 1) {
+        currentSlide++;
+        updateSlide();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        currentSlide--;
+        updateSlide();
+      }
+    }
+
+    function goToSlide(index) {
+      if (index >= 0 && index < slides.length) {
+        currentSlide = index;
+        updateSlide();
+      }
+    }
+
+    function toggleOverview() {
+      overviewModal.classList.toggle('open');
+    }
+
+    function closeOverview() {
+      overviewModal.classList.remove('open');
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        presentationFrame.requestFullscreen().catch(err => {
+          alert(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // Event Listeners
+    nextBtn.addEventListener('click', nextSlide);
+    prevBtn.addEventListener('click', prevSlide);
+    overviewBtn.addEventListener('click', toggleOverview);
+    closeOverviewBtn.addEventListener('click', closeOverview);
+    fullscreenBtn.addEventListener('click', toggleFullscreen);
+
+    // Keyboard Navigation
+    window.addEventListener('keydown', (e) => {
+      if (overviewModal.classList.contains('open')) {
+        if (e.key === 'Escape') closeOverview();
+        return;
+      }
+
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault();
+        prevSlide();
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      } else if (e.key === 'o' || e.key === 'O') {
+        toggleOverview();
+      } else if (e.key === 'Home') {
+        goToSlide(0);
+      } else if (e.key === 'End') {
+        goToSlide(slides.length - 1);
+      }
+    });
+
+    // Tab Switching Logic
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const parentContainer = btn.closest('.tab-container');
+        if (!parentContainer) return;
+        const targetId = btn.dataset.target;
+        parentContainer.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        parentContainer.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        const targetPane = parentContainer.querySelector(`#${targetId}`);
+        if (targetPane) targetPane.classList.add('active');
+      });
+    });
+
+    // Initialize View
+    updateSlide();
+  </script>
+</body>
+</html>
