@@ -1,6 +1,6 @@
 # Multimodal Conversational Audio Sentiment & Intelligence Platform
 
-A high-performance, modular platform for **Speech-to-Text (ASR)**, **Speaker Diarization with Native Overlap Detection**, **Acoustic Speech Emotion Recognition (SER)**, and **Contextual Dialogue Reasoning (Qwen / OpenRouter & LangGraph)**.
+A high-performance, modular backend platform for **Speech-to-Text (ASR)**, **Speaker Diarization with Native Overlap Detection**, **Acoustic Speech Emotion Recognition (SER)**, and **Contextual Dialogue Reasoning (Qwen / OpenRouter & LangGraph)**.
 
 Designed specifically for contact centers, customer experience analytics, and telephony dialogue understanding.
 
@@ -13,10 +13,10 @@ The platform uses a **Hexagonal (Ports & Adapters) Architecture** that decouples
 ```mermaid
 flowchart TD
     subgraph INGESTION["1. Audio Ingestion & Normalization"]
-        A["Client / Audio Upload (WAV, MP3, WebM, OGG)"] --> B["FFmpeg Universal Gatekeeper<br/>(Normalizes to 16kHz Mono 16-bit PCM WAV)"]
+        A["Audio Ingestion / Upload (WAV, MP3, WebM, OGG)"] --> B["FFmpeg Universal Gatekeeper<br/>(Normalizes to 16kHz Mono 16-bit PCM WAV)"]
     end
 
-    subgraph LOCAL_GPU["2. Local Perception Layer (NVIDIA RTX 4070 Ti - ~3.5 GB VRAM)"]
+    subgraph LOCAL_GPU["2. Local Perception Layer (~3.5 GB VRAM)"]
         B --> C["Faster-Whisper (large-v3-turbo)<br/>• Continuous 30s Attention Window<br/>• Conversational Silero VAD<br/>• Word-Level Timestamps"]
         B --> D["Pyannote Diarization (community-1)<br/>• Speaker Chronological Intervals<br/>• Native Multi-Speaker Overlap Tracking"]
         B --> E["Emotion2Vec Acoustic Engine<br/>• 350ms Symmetric Context Padding<br/>• Physical Pitch, Energy & Tempo Formants"]
@@ -82,13 +82,14 @@ Instead of classifying each sentence in isolation with small models, the entire 
 ```
 server/
 ├── pyproject.toml                 # Project metadata and dependencies
-├── README.md                      # Platform documentation
+├── README.md                      # Backend platform documentation
 ├── .env                           # Environment variables & model configuration
 ├── .env.example                   # Example environment template
 │
-├── tests/                         # Automated Test Suite (18 tests, 0.1s execution)
-│   ├── test_refactored_pipeline.py# Unit tests for Alignment, Overlaps, and Affect Dynamics
-│   └── test_server.py             # FastAPI HTTP endpoint integration tests
+├── scripts/                       # Audio verification & standalone utility scripts
+│   ├── advanced_asr.py
+│   ├── verify_overlap.py
+│   └── whisperx_asr.py
 │
 └── src/
     ├── main.py                    # FastAPI entrypoint, lifespan model cache, FFmpeg gatekeeper
@@ -100,14 +101,14 @@ server/
         ├── adapters/              # Modular Concrete Adapters (Plugs)
         │   ├── asr/
         │   │   ├── faster_whisper.py  # Faster-Whisper ASR with Silero VAD
-        │   │   └── mock.py            # Fast in-memory mock for unit tests
+        │   │   └── mock.py            # Fast in-memory mock adapter
         │   ├── diarization/
         │   │   ├── pyannote.py        # Pyannote with native multi-speaker overlap detection
         │   │   └── mock.py            # Mock diarizer with configurable intervals & overlaps
         │   └── emotion/
         │       ├── emotion2vec.py     # FunASR Emotion2Vec+ acoustic scorer
         │       ├── distilroberta.py   # Local HuggingFace DistilRoBERTa semantic classifier
-        │       ├── openrouter.py      # Cloud Qwen 27B/72B batched contextual semantic scorer
+        │       ├── qwen.py            # Cloud Qwen 27B/72B batched contextual semantic scorer
         │       └── mock.py            # Mock emotion scorers
         │
         ├── services/              # Pure Domain & Business Logic
@@ -126,19 +127,19 @@ server/
 
 ---
 
-## Hardware Budget (NVIDIA RTX 4070 Ti - 12 GB VRAM)
+## VRAM & Hardware Requirements
 
-By offloading deep LLM reasoning to OpenRouter, local GPU memory remains light, cool, and fast:
+By offloading contextual dialogue LLM reasoning to OpenRouter or OpenAI-compatible cloud endpoints, local memory consumption remains lightweight:
 
-| Component | Model | Device | VRAM Usage |
+| Component | Model / Engine | Execution Mode | Estimated VRAM Consumed |
 |---|---|---|---|
-| **ASR** | Faster-Whisper (`large-v3-turbo`) | CUDA (`float16`) | ~1.5 GB |
-| **Diarization** | Pyannote (`speaker-diarization-community-1`) | CUDA (`float16`) | ~1.5 GB |
-| **Acoustic SER** | Emotion2Vec (`emotion2vec_plus_base`) | CUDA / CPU | ~0.5 GB |
-| **Semantic LLM** | Qwen 27B / 72B | **Cloud (OpenRouter)** | **0.0 GB** |
-| **Total VRAM** | — | — | **~3.5 GB / 12 GB** |
+| **Speech-to-Text (ASR)** | Faster-Whisper (`large-v3-turbo`) | CUDA (`float16`) | ~1.5 GB |
+| **Speaker Diarization** | Pyannote (`speaker-diarization-community-1`) | CUDA (`float16`) | ~1.5 GB |
+| **Acoustic Emotion (SER)** | Emotion2Vec (`emotion2vec_plus_base`) | CUDA / CPU | ~0.5 GB |
+| **Dialogue Semantics (LLM)**| Qwen 2.5 (27B / 72B) | Cloud API (OpenRouter) | **0.0 GB** |
+| **Total Local VRAM** | — | — | **~3.5 GB** |
 
-*(Leaves ~8.5 GB of free VRAM available for other workloads or concurrent calls).*
+> **Hardware Recommendation:** Any GPU with **≥ 4 GB to 6 GB VRAM** will comfortably run the entire local perception pipeline for single-stream execution. System memory can fall back to CPU if a dedicated GPU is not present.
 
 ---
 
@@ -146,9 +147,9 @@ By offloading deep LLM reasoning to OpenRouter, local GPU memory remains light, 
 
 ### 1. Prerequisites
 - **Python 3.10+** (Python 3.11–3.13 supported)
-- **NVIDIA GPU** with CUDA drivers installed (for local ASR & Diarization)
-- **FFmpeg** installed and accessible in system `PATH` (or auto-detected via WinGet)
-- **Hugging Face Token** with access to `pyannote/speaker-diarization-community-1`
+- **NVIDIA GPU** with CUDA drivers (recommended ≥ 4 GB VRAM for local acceleration, or CPU execution)
+- **FFmpeg** installed and accessible in system `PATH`
+- **Hugging Face Token** with accepted terms for `pyannote/speaker-diarization-community-1`
 
 ### 2. Environment Configuration
 Copy `.env.example` to `.env` and fill in your credentials:
@@ -178,23 +179,17 @@ SEGMENT_MAX_DURATION=6.0
 SEGMENT_MAX_GAP=0.5
 ```
 
-### 3. Run the Automated Test Suite
-Run the 18 automated unit and API integration tests:
-```powershell
-.venv\Scripts\python -m unittest discover tests
-```
-
-### 4. Run the API Server
+### 3. Run the API Server
 Start the FastAPI server:
 ```powershell
 $env:PYTHONPATH="src"
 .venv\Scripts\python src\main.py
 ```
-- API Docs: `http://localhost:8000/docs`
+- API Docs (Swagger): `http://localhost:8000/docs`
 - Health Check: `http://localhost:8000/health`
 - Analysis Endpoint: `POST http://localhost:8000/api/v1/audio/analyze`
 
-### 5. Run the Direct CLI Pipeline Runner
+### 4. Run the Direct CLI Pipeline Runner
 Process any local audio file directly from the command line:
 ```powershell
 $env:PYTHONPATH="src"
@@ -205,7 +200,7 @@ $env:PYTHONPATH="src"
 
 ## API Response Schema
 
-A successful request to `/api/v1/audio/analyze` returns a structured JSON payload:
+A successful request to `POST /api/v1/audio/analyze` returns a structured JSON payload:
 
 ```json
 {
@@ -279,7 +274,7 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from app.schemas.common import AudioResponse
 
-# Connect to Qwen 27B via OpenRouter
+# Connect to Qwen via OpenRouter
 llm = ChatOpenAI(
     model="qwen/qwen-2.5-72b-instruct",
     openai_api_base="https://openrouter.ai/api/v1",
@@ -320,7 +315,7 @@ call_agent = graph.compile()
 
 ## Extending the Pipeline (Pluggable Adapters)
 
-To add any new model, simply implement the corresponding Protocol in [`src/app/interfaces`](file:///E:/Project/AudioSentimentalAnalysis/server/src/app/interfaces/__init__.py):
+To add any new model, implement the corresponding Protocol in `src/app/interfaces/__init__.py`:
 
 ```python
 from app.interfaces import BaseSemanticScorer
@@ -330,13 +325,13 @@ from typing import List
 
 class MyCustomSemanticScorer(BaseSemanticScorer):
     def score_batch(self, texts: List[str]) -> List[List[EmotionPrediction]]:
-        # Your custom model inference
+        # Custom model inference
         return [
             [EmotionPrediction(label=UnifiedEmotion.HAPPY, original_label="joy", score=0.95)]
             for _ in texts
         ]
 ```
-Register your adapter in [`src/app/core/factory.py`](file:///E:/Project/AudioSentimentalAnalysis/server/src/app/core/factory.py) and select it via `.env`.
+Register your adapter in `src/app/core/factory.py` and select it via `.env`.
 
 ---
 
