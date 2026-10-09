@@ -72,7 +72,9 @@ class PipelineOrchestrator:
         self.semantic_scorer = self.emotion_engine.semantic_scorer
         self.acoustic_scorer = self.emotion_engine.acoustic_scorer
 
-    def _process_synchronous(self, file_path: str) -> AudioResponse:
+    def _process_synchronous(
+        self, file_path: str, split_by_speaker: Optional[bool] = None
+    ) -> AudioResponse:
         """The blocking synchronous pipeline running the ML and domain logic."""
 
         # 1. Speech-to-Text with word timestamps
@@ -84,12 +86,25 @@ class PipelineOrchestrator:
         )
 
         # 2. Speaker Diarization intervals & Overlapping Speech
-        if hasattr(self.diarizer_adapter, "diarize_with_overlaps"):
-            speaker_intervals, overlap_intervals = self.diarizer_adapter.diarize_with_overlaps(
-                file_path
-            )
+        should_split = (
+            split_by_speaker
+            if split_by_speaker is not None
+            else self.settings.split_by_speaker
+        )
+        if should_split:
+            if hasattr(self.diarizer_adapter, "diarize_with_overlaps"):
+                speaker_intervals, overlap_intervals = self.diarizer_adapter.diarize_with_overlaps(
+                    file_path
+                )
+            else:
+                speaker_intervals = self.diarizer_adapter.diarize(file_path)
+                overlap_intervals = []
         else:
-            speaker_intervals = self.diarizer_adapter.diarize(file_path)
+            from app.interfaces import SpeakerInterval
+
+            speaker_intervals = [
+                SpeakerInterval(start=0.0, end=999999.0, speaker="SPEAKER_00")
+            ]
             overlap_intervals = []
 
         # 3. Domain Alignment & Sentence/Duration Chunking with Overlap Enrichment
@@ -191,9 +206,11 @@ class PipelineOrchestrator:
             analysis=analysis_result,
         )
 
-    async def process_audio_async(self, file_path: str) -> AudioResponse:
+    async def process_audio_async(
+        self, file_path: str, split_by_speaker: Optional[bool] = None
+    ) -> AudioResponse:
         """Asynchronously dispatches the synchronous pipeline to a worker thread."""
-        return await asyncio.to_thread(self._process_synchronous, file_path)
+        return await asyncio.to_thread(self._process_synchronous, file_path, split_by_speaker)
 
 
 if __name__ == "__main__":

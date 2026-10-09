@@ -1,0 +1,183 @@
+# Licences policy definition for convaudio
+allowed:
+  - "MIT"
+  - "Apache-2.0"
+  - "BSD-2-Clause"
+  - "BSD-3-Clause"
+  - "ISC"
+  - "PSF-2.0"
+  - "N/A" # Stub / internal test fixtures
+
+allowed_with_attribution:
+  - "CC-BY-4.0"
+
+denied_patterns:
+  - "*-NC*"
+  - "*non-commercial*"
+  - "*research-only*"
+  - "BSD-4-Clause"
+  - "GPL*"
+  - "LGPL*"
+  - "AGPL*"
+  - "UNKNOWN"
+  - "UNRESOLVED"
+
+# Approved components with explicit code & weight licenses
+approved_components:
+  convaudio:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  funasr:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  modelscope:
+    code_licence: "Apache-2.0"
+    weights_licence: "N/A"
+  emotion2vec:
+    code_licence: "Apache-2.0"
+    weights_licence: "Apache-2.0"
+  pyannote.audio:
+    code_licence: "MIT"
+    weights_licence: "MIT"
+    note: "Approved per policy including gated HF weights"
+  faster-whisper:
+    code_licence: "MIT"
+    weights_licence: "Apache-2.0"
+  torchaudio:
+    code_licence: "BSD-2-Clause"
+    weights_licence: "Apache-2.0"
+  torch:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  torchvision:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  wavlm:
+    code_licence: "MIT"
+    weights_licence: "MIT"
+  transformers:
+    code_licence: "Apache-2.0"
+    weights_licence: "N/A"
+  soundfile:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  scipy:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  numpy:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  pydantic:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  pydantic-settings:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  pydantic-core:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  typer:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  jsonschema:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  jsonschema-specifications:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  referencing:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  rpds-py:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  pyyaml:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  tqdm:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  tiktoken:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  sympy:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  mpmath:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  networkx:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  jinja2:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  markupsafe:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  fsspec:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  filelock:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  typing-extensions:
+    code_licence: "PSF-2.0"
+    weights_licence: "N/A"
+  typing-inspection:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  annotated-types:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  annotated-doc:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  cffi:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  pycparser:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  python-dotenv:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  rich:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  colorama:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  markdown-it-py:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  mdurl:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  pygments:
+    code_licence: "BSD-2-Clause"
+    weights_licence: "N/A"
+  setuptools:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  attrs:
+    code_licence: "MIT"
+    weights_licence: "N/A"
+  shellingham:
+    code_licence: "ISC"
+    weights_licence: "N/A"
+  sortedcontainers:
+    code_licence: "Apache-2.0"
+    weights_licence: "N/A"
+  convaudio_stub:
+    code_licence: "N/A"
+    weights_licence: "N/A"
+  scikit-learn:
+    code_licence: "BSD-3-Clause"
+    weights_licence: "N/A"
+  all-minilm-l6-v2:
+    code_licence: "Apache-2.0"
+    weights_licence: "Apache-2.0"
+  modernbert-base:
+    code_licence: "Apache-2.0"
+    weights_licence: "Apache-2.0"

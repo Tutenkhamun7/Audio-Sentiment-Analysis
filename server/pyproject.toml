@@ -21,6 +21,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "python-multipart>=0.0.32",
     "soundfile>=0.14.0",
+    "speechbrain>=1.1.0",
     "torch>=2.14.1",
     "torchaudio>=2.11.0",
     "torchvision>=0.29.1",
@@ -37,6 +38,8 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
+    "pytest>=9.1.1",
     "ruff>=0.16.9",
 ]
 

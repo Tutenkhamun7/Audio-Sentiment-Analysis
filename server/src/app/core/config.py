@@ -82,6 +82,10 @@ class Settings(BaseSettings):
         default=None,
         description="Maximum number of speakers to detect (None for automatic detection).",
     )
+    split_by_speaker: bool = Field(
+        default=True,
+        description="Whether to split audio by speakers via Pyannote diarization. When False, treats audio as single unified speaker.",
+    )
 
     # --- Semantic & Qwen / OpenRouter Selection ---
     semantic_engine: str = Field(

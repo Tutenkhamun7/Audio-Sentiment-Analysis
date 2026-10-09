@@ -7,7 +7,7 @@ import subprocess
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 
 from app.schemas.common import AudioResponse
 from app.services.orchestrator import PipelineOrchestrator
@@ -42,6 +42,10 @@ SUPPORTED_EXTENSIONS = (
 async def analyze_audio(
     request: Request,
     file: UploadFile = File(...),
+    split_by_speaker: Optional[bool] = Query(
+        None,
+        description="Option to split audio by speakers. Set false to disable diarization and analyze as single speaker.",
+    ),
 ) -> AudioResponse:
     """
     Receives an audio file, processes it via ASR and Emotion engines asynchronously,
@@ -104,7 +108,9 @@ async def analyze_audio(
         )
 
         # 3. Pass the normalized file to the ML pipeline
-        response = await orchestrator.process_audio_async(wav_file_path)
+        response = await orchestrator.process_audio_async(
+            wav_file_path, split_by_speaker=split_by_speaker
+        )
         response.file_name = filename
         return response
 
