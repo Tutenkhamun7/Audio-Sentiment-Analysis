@@ -1,3 +1,6 @@
-from app.core.config import Settings, get_settings
+"""Core infrastructure modules for app service."""
 
-__all__ = ["Settings", "get_settings"]
+from app.core.config import Settings, get_settings, settings
+from app.core.model_registry import ModelRegistry
+
+__all__ = ["Settings", "settings", "get_settings", "ModelRegistry"]

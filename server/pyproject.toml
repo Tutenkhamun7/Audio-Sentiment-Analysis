@@ -75,4 +75,9 @@ mypy_path = ["src", "typings"]
 explicit_package_bases = true
 ignore_missing_imports = true
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+
+
 

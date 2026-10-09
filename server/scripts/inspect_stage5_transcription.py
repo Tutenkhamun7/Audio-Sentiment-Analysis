@@ -18,13 +18,13 @@ import sys
 import torch
 
 # Add server directory to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / \src\))
 
-from src3.core.audio import load_audio_from_file
-from src3.core.config import settings
-from src3.engine.diarizer import run_diarization
-from src3.engine.overlap_separator import separate_overlaps_in_memory
-from src3.engine.transcriber import transcribe_speaker_turns
+from app.core.audio import load_audio_from_file
+from app.core.config import settings
+from app.engine.diarizer import run_diarization
+from app.engine.overlap_separator import separate_overlaps_in_memory
+from app.engine.transcriber import transcribe_speaker_turns
 
 
 def run_stage5_inspection(audio_path: str) -> None:
@@ -133,3 +133,4 @@ def run_stage5_inspection(audio_path: str) -> None:
 if __name__ == "__main__":
     test_path = sys.argv[1] if len(sys.argv) > 1 else r"C:\Users\Anvay\Downloads\test.wav"
     run_stage5_inspection(test_path)
+

@@ -1,298 +1,250 @@
-import asyncio
-from collections import Counter
-import os
-from typing import Dict, Optional
+"""End-to-end in-memory audio analysis orchestrator."""
 
-from app.core.config import Settings, get_settings
-from app.core.factory import (
-    create_acoustic_scorer,
-    create_affect_evaluator,
-    create_alignment_service,
-    create_asr_adapter,
-    create_diarizer_adapter,
-    create_emotion_engine,
-    create_semantic_scorer,
+from __future__ import annotations
+
+import logging
+import time
+from typing import Dict, List, Optional
+import uuid
+
+import torch
+
+from app.core.audio import to_mono
+from app.core.config import settings
+from app.engine.acoustic import extract_turn_emotions
+from app.engine.aligner import align_and_snap_turn_boundaries
+from app.engine.branch import decide_branch
+from app.engine.diarizer import DiarizationResult, RawTurn, run_diarization
+from app.engine.overlap_separator import separate_overlaps_in_memory
+from app.engine.semantic import analyze_text_sentiment, analyze_texts_batch
+from app.engine.transcriber import transcribe_speaker_turns
+from app.schemas.request import AnalyzeOptions
+from app.schemas.response import (
+    AnalyzeResponse,
+    CallMetrics,
+    EmotionAnalysis,
+    SentimentAnalysis,
+    TurnDetail,
 )
-from app.interfaces import (
-    BaseAcousticScorer,
-    BaseASR,
-    BaseDiarizer,
-    BaseSemanticScorer,
-)
-from app.schemas.common import (
-    AgentSynthesis,
-    AudioAnalysisResult,
-    AudioResponse,
-    UnifiedEmotion,
-)
-from app.services.affect_evaluator import AffectEvaluator
-from app.services.alignment import AlignmentService
-from app.services.emotion_engine import EmotionEngine
+
+logger = logging.getLogger(__name__)
 
 
-class PipelineOrchestrator:
-    """
-    Coordinates the execution flow across pluggable ASR, Diarization,
-    and Emotion scoring adapters and domain services.
-    """
+class AudioAnalysisOrchestrator:
+    """Coordinates in-memory diarization, overlap separation, ASR, and emotion extraction."""
 
-    def __init__(
+    def __init__(self) -> None:
+        pass
+
+    def analyze(
         self,
-        settings: Optional[Settings] = None,
-        asr_adapter: Optional[BaseASR] = None,
-        diarizer_adapter: Optional[BaseDiarizer] = None,
-        alignment_service: Optional[AlignmentService] = None,
-        affect_evaluator: Optional[AffectEvaluator] = None,
-        emotion_engine: Optional[EmotionEngine] = None,
-        semantic_scorer: Optional[BaseSemanticScorer] = None,
-        acoustic_scorer: Optional[BaseAcousticScorer] = None,
-    ):
-        self.settings = settings or get_settings()
+        waveform: torch.Tensor,
+        sr: int = 16000,
+        options: Optional[AnalyzeOptions] = None,
+        call_id: Optional[str] = None,
+    ) -> AnalyzeResponse:
+        """Run complete audio analysis pipeline in RAM without writing temporary WAV files."""
+        t0 = time.perf_counter()
+        call_id = call_id or f"call_{uuid.uuid4().hex[:8]}"
+        opts = options or AnalyzeOptions()
 
-        # Wire pluggable adapters and domain services
-        self.asr_adapter = asr_adapter or create_asr_adapter(self.settings)
-        self.diarizer_adapter = diarizer_adapter or create_diarizer_adapter(self.settings)
-        self.alignment_service = alignment_service or create_alignment_service(self.settings)
-        self.affect_evaluator = affect_evaluator or create_affect_evaluator(self.settings)
+        total_samples = waveform.shape[-1]
+        duration_s = float(total_samples) / float(sr)
 
-        # Wire unified EmotionEngine
-        if emotion_engine is not None:
-            self.emotion_engine = emotion_engine
-        elif semantic_scorer or acoustic_scorer:
-            self.emotion_engine = EmotionEngine(
-                device=self.settings.emotion_device,
-                semantic_scorer=semantic_scorer or create_semantic_scorer(self.settings),
-                acoustic_scorer=acoustic_scorer or create_acoustic_scorer(self.settings),
-                affect_evaluator=self.affect_evaluator,
-            )
+        # ---------------------------------------------------------
+        # Step 1: Branch Decision (Instant bypass if clean stereo)
+        # ---------------------------------------------------------
+        branch, _ = decide_branch(
+            waveform,
+            corr_threshold=settings.stereo_corr_threshold,
+            min_energy_ratio=settings.stereo_energy_ratio_min,
+            force_branch=opts.force_branch,
+        )
+
+        speaker_streams: Dict[str, torch.Tensor] = {}
+        all_raw_turns: List[RawTurn] = []
+        overlaps_list = []
+
+        if branch == "stereo_split":
+            # Left channel = Speaker 0, Right channel = Speaker 1
+            spk0 = waveform[0]
+            spk1 = waveform[1]
+            speaker_streams["SPEAKER_00"] = spk0
+            speaker_streams["SPEAKER_01"] = spk1
+            # Run simple VAD / full timeline
+            all_raw_turns.append(RawTurn(speaker="SPEAKER_00", start=0.0, end=duration_s))
+            all_raw_turns.append(RawTurn(speaker="SPEAKER_01", start=0.0, end=duration_s))
+            speakers = ["SPEAKER_00", "SPEAKER_01"]
+        elif branch == "no_split":
+            mono = to_mono(waveform).squeeze(0)
+            speaker_streams["SPEAKER_00"] = mono
+            all_raw_turns.append(RawTurn(speaker="SPEAKER_00", start=0.0, end=duration_s))
+            speakers = ["SPEAKER_00"]
         else:
-            self.emotion_engine = create_emotion_engine(self.settings)
+            # Mono separated branch
+            mono = to_mono(waveform)
+            # -----------------------------------------------------
+            # Step 2: Diarization
+            # -----------------------------------------------------
+            diar_res: DiarizationResult = run_diarization(
+                mono_waveform=mono,
+                sr=sr,
+                num_speakers=opts.num_speakers,
+                min_overlap_duration_s=settings.min_overlap_duration_s,
+                merge_consecutive=opts.merge_consecutive,
+                max_merge_gap_s=settings.max_merge_gap_s,
+                min_turn_duration_s=settings.min_turn_duration_s,
+            )
+            speakers = diar_res.speakers
+            all_raw_turns = diar_res.turns
+            overlaps_list = diar_res.overlaps
 
-        # Backward compatibility accessors
-        self.semantic_scorer = self.emotion_engine.semantic_scorer
-        self.acoustic_scorer = self.emotion_engine.acoustic_scorer
-
-    def _process_synchronous(
-        self, file_path: str, split_by_speaker: Optional[bool] = None
-    ) -> AudioResponse:
-        """The blocking synchronous pipeline running the ML and domain logic."""
-
-        # 1. Speech-to-Text with word timestamps
-        raw_segments = self.asr_adapter.transcribe(
-            file_path,
-            beam_size=self.settings.whisper_beam_size,
-            language=self.settings.whisper_language,
-            vad_filter=self.settings.vad_filter,
-        )
-
-        # 2. Speaker Diarization intervals & Overlapping Speech
-        should_split = (
-            split_by_speaker
-            if split_by_speaker is not None
-            else self.settings.split_by_speaker
-        )
-        if should_split:
-            if hasattr(self.diarizer_adapter, "diarize_with_overlaps"):
-                speaker_intervals, overlap_intervals = self.diarizer_adapter.diarize_with_overlaps(
-                    file_path
+            # -----------------------------------------------------
+            # Step 3: Targeted Overlap Separation (SepFormer)
+            # -----------------------------------------------------
+            if opts.enable_overlap_separation and settings.enable_overlap_separation:
+                speaker_streams = separate_overlaps_in_memory(
+                    mono=mono,
+                    sr=sr,
+                    diarization=diar_res,
+                    overlap_padding_s=settings.overlap_padding_s,
                 )
             else:
-                speaker_intervals = self.diarizer_adapter.diarize(file_path)
-                overlap_intervals = []
-        else:
-            from app.interfaces import SpeakerInterval
+                for spk in speakers:
+                    spk_wav = torch.zeros(total_samples, dtype=torch.float32)
+                    for t in diar_res.turns:
+                        if t.speaker == spk:
+                            s_idx = max(0, int(t.start * sr))
+                            e_idx = min(total_samples, int(t.end * sr))
+                            spk_wav[s_idx:e_idx] = mono.squeeze(0)[s_idx:e_idx]
+                    speaker_streams[spk] = spk_wav
 
-            speaker_intervals = [
-                SpeakerInterval(start=0.0, end=999999.0, speaker="SPEAKER_00")
-            ]
-            overlap_intervals = []
+        # ---------------------------------------------------------
+        # Step 4: Transcription & Forced Alignment (Per Speaker)
+        # ---------------------------------------------------------
+        prompt = opts.initial_prompt or settings.whisper_initial_prompt
+        for spk in speakers:
+            spk_audio = speaker_streams.get(spk, torch.zeros(total_samples))
+            spk_turns = [t for t in all_raw_turns if t.speaker == spk]
 
-        # 3. Domain Alignment & Sentence/Duration Chunking with Overlap Enrichment
-        diarized_segments, speakers = self.alignment_service.process(
-            raw_segments,
-            speaker_intervals,
-            overlap_intervals=overlap_intervals,
-            min_duration=self.settings.segment_min_duration,
-            max_duration=self.settings.segment_max_duration,
-            max_gap=self.settings.segment_max_gap,
-        )
-
-        if not diarized_segments:
-            empty_result = AudioAnalysisResult(
-                overall_transcript="",
-                timeline=[],
-                agent_context=AgentSynthesis(
-                    summary="No speech detected in audio.",
-                    escalation_detected=False,
-                    primary_speaker_sentiments={},
-                    flagged_anomalies=[],
-                    interruption_count=0,
-                    total_overtalk_seconds=0.0,
-                    overtalk_ratio=0.0,
-                ),
-            )
-            return AudioResponse(
-                file_name=os.path.basename(file_path),
-                speakers_detected=[],
-                analysis=empty_result,
+            # 4a. Transcribe via Faster-Whisper
+            transcribe_speaker_turns(
+                speaker_wav=spk_audio,
+                turns=spk_turns,
+                sr=sr,
+                vad_filter=opts.vad_filter,
+                initial_prompt=prompt,
+                collar_s=settings.asr_collar_s,
+                all_turns=all_raw_turns,
+                min_word_prob=settings.min_word_prob,
             )
 
-        # 4. Multimodal Emotion Scoring & Affect Dynamics
-        timeline_events = self.emotion_engine.process(file_path, diarized_segments)
+            # 4b. Align & Snap turn boundaries via CTC Wav2Vec2
+            if opts.align_words:
+                align_and_snap_turn_boundaries(
+                    speaker_wav=spk_audio,
+                    turns=spk_turns,
+                    sr=sr,
+                )
 
-        # 5. Consolidated Transcript
-        overall_transcript = "\n".join(
-            f"[{event.start_time:05.2f}s - {event.end_time:05.2f}s] {event.speaker}: {event.text}"
-            for event in timeline_events
-        )
+            # 4c. Acoustic Emotion (emotion2vec)
+            if opts.predict_emotion:
+                extract_turn_emotions(
+                    speaker_wav=spk_audio,
+                    turns=spk_turns,
+                    sr=sr,
+                    min_speech_turn_s=settings.min_speech_turn_s,
+                )
 
-        # 6. High-Level Synthesis & Interruption Metrics
-        flagged_anomalies = [
-            f"[{event.start_time:05.2f}s - {event.end_time:05.2f}s] {event.speaker}: {event.conflict_detail}"
-            for event in timeline_events
-            if event.is_conflict or (event.conflict_detail and "Hostile" in event.conflict_detail)
-        ]
+        # Filter out micro-turns without speech
+        valid_raw_turns = []
+        for t in all_raw_turns:
+            has_text = bool(getattr(t, "text", None) and getattr(t, "text", "").strip())
+            # In no_split mode keep turns with sufficient duration (even for tones/silence)
+            if branch == "no_split":
+                if has_text or t.duration >= settings.min_turn_duration_s:
+                    valid_raw_turns.append(t)
+            else:
+                # In diarized modes, keep turns that produced recognized speech
+                if has_text:
+                    valid_raw_turns.append(t)
+        valid_raw_turns.sort(key=lambda t: (t.start, t.end))
 
-        total_overlap_sec = round(sum(ov.end - ov.start for ov in overlap_intervals), 2)
-        total_speech_sec = sum(e.end_time - e.start_time for e in timeline_events)
-        overtalk_ratio = (
-            round(total_overlap_sec / total_speech_sec, 4) if total_speech_sec > 0 else 0.0
-        )
-        interruption_count = sum(1 for e in timeline_events if e.is_interruption)
+        final_turns: List[TurnDetail] = []
+        interruption_count = 0
+        total_overlap_duration = sum(o.duration for o in overlaps_list)
 
-        escalation = any(
-            (
-                event.acoustic_emotion
-                and event.acoustic_emotion[0].label == UnifiedEmotion.ANGRY
-                and event.acoustic_emotion[0].score >= 0.50
-            )
-            or (
-                event.is_interruption
-                and any(
-                    p.label in {UnifiedEmotion.ANGRY, UnifiedEmotion.DISGUST}
-                    for p in event.semantic_emotion[:1] + event.acoustic_emotion[:1]
+        # Batch analyze textual sentiments across all turns
+        turn_texts = [getattr(t, "text", "") or "" for t in valid_raw_turns]
+        turn_sentiments = analyze_texts_batch(turn_texts)
+
+        for idx, t in enumerate(valid_raw_turns):
+            # Check interruption dynamic
+            is_interrupt = False
+            interrupted_by = None
+            interrupts = None
+
+            if idx > 0 and len(final_turns) > 0:
+                prev_turn = valid_raw_turns[idx - 1]
+                # If current turn starts before previous turn ends
+                if t.start < prev_turn.end and t.speaker != prev_turn.speaker:
+                    # If previous speaker stopped within interrupt_window_s after current speaker started
+                    if (prev_turn.end - t.start) <= settings.interrupt_window_s:
+                        is_interrupt = True
+                        interrupts = prev_turn.speaker
+                        interruption_count += 1
+                        final_turns[-1].interrupted_by = t.speaker
+
+            turn_words = getattr(t, "words", [])
+            turn_text = getattr(t, "text", None)
+            turn_emotion = getattr(t, "emotion", EmotionAnalysis())
+
+            s_lbl, s_conf = turn_sentiments[idx] if idx < len(turn_sentiments) else ("neutral", 1.0)
+            turn_sentiment = SentimentAnalysis(label=s_lbl, score=s_conf)
+
+            # Contextual affect augmentation: if acoustic emotion was abstained or empty,
+            # provide conversational sentiment fallback
+            if not turn_emotion.dominant_emotion:
+                turn_emotion.dominant_emotion = s_lbl
+                if s_lbl not in turn_emotion.scores:
+                    turn_emotion.scores[s_lbl] = s_conf
+
+            final_turns.append(
+                TurnDetail(
+                    turn_id=f"turn_{idx:03d}",
+                    speaker=t.speaker,
+                    start=round(t.start, 3),
+                    end=round(t.end, 3),
+                    duration=round(t.duration, 3),
+                    text=turn_text,
+                    words=turn_words,
+                    emotion=turn_emotion,
+                    sentiment=turn_sentiment,
+                    is_interruption=is_interrupt,
+                    interrupted_by=interrupted_by,
+                    interrupts=interrupts,
+                    overlap_ratio=round(total_overlap_duration / max(0.1, duration_s), 4),
                 )
             )
-            for event in timeline_events
-        )
 
-        speaker_sentiments: Dict[str, str] = {}
-        for spk in speakers:
-            spk_events = [e for e in timeline_events if e.speaker == spk]
-            labels = [e.acoustic_emotion[0].label.value for e in spk_events if e.acoustic_emotion]
-            if labels:
-                speaker_sentiments[spk] = Counter(labels).most_common(1)[0][0]
+        total_speech_s = sum(t.duration for t in final_turns)
 
-        agent_context = AgentSynthesis(
-            summary=f"Analyzed {len(timeline_events)} segments across {len(speakers)} speaker(s). "
-            f"Detected {interruption_count} interruption(s) totaling {total_overlap_sec}s over-talk.",
-            escalation_detected=escalation,
-            primary_speaker_sentiments=speaker_sentiments,
-            flagged_anomalies=flagged_anomalies,
+        metrics = CallMetrics(
+            duration_s=round(duration_s, 2),
+            total_speech_s=round(total_speech_s, 2),
+            overlap_s=round(total_overlap_duration, 2),
+            overlap_ratio=round(total_overlap_duration / max(0.1, duration_s), 4),
             interruption_count=interruption_count,
-            total_overtalk_seconds=total_overlap_sec,
-            overtalk_ratio=overtalk_ratio,
+            speaker_count=len(speakers),
+            branch_used=branch,
         )
 
-        analysis_result = AudioAnalysisResult(
-            overall_transcript=overall_transcript,
-            timeline=timeline_events,
-            agent_context=agent_context,
+        elapsed = round(time.perf_counter() - t0, 3)
+
+        return AnalyzeResponse(
+            call_id=call_id,
+            metrics=metrics,
+            turns=final_turns,
+            speakers=speakers,
+            processing_time_s=elapsed,
         )
-
-        return AudioResponse(
-            file_name=os.path.basename(file_path),
-            speakers_detected=speakers,
-            analysis=analysis_result,
-        )
-
-    async def process_audio_async(
-        self, file_path: str, split_by_speaker: Optional[bool] = None
-    ) -> AudioResponse:
-        """Asynchronously dispatches the synchronous pipeline to a worker thread."""
-        return await asyncio.to_thread(self._process_synchronous, file_path, split_by_speaker)
-
-
-if __name__ == "__main__":
-    import argparse
-
-    import sys
-
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-    # Ensure FFmpeg DLL path is configured on Windows
-    FFMPEG_BIN_PATH = (
-        r"C:\Users\Anvay\AppData\Local\Microsoft\WinGet\Packages"
-        r"\Gyan.FFmpeg.Shared_Microsoft.Winget.Source_8wekyb3d8bbwe"
-        r"\ffmpeg-9.0.2-full_build-shared\bin"
-    )
-    if os.name == "nt" and os.path.exists(FFMPEG_BIN_PATH):
-        try:
-            os.add_dll_directory(FFMPEG_BIN_PATH)
-        except Exception:
-            pass
-
-    parser = argparse.ArgumentParser(description="Test the Pipeline Orchestrator directly.")
-    parser.add_argument(
-        "--audio",
-        type=str,
-        default=r"C:\Users\Anvay\Downloads\test.wav",
-        help="Absolute path to a real test .wav file",
-    )
-    args = parser.parse_args()
-
-    async def run_test():
-        if not os.path.exists(args.audio):
-            print(f"ERROR: Could not find file at {os.path.abspath(args.audio)}")
-            return
-
-        print("=" * 80)
-        print(" RUNNING PIPELINE ORCHESTRATOR DIRECTLY")
-        print("=" * 80)
-        print(f"[*] Audio File : {args.audio}")
-
-        orchestrator = PipelineOrchestrator()
-        result = await orchestrator.process_audio_async(args.audio)
-
-        print("\n" + "=" * 80)
-        print(" PIPELINE RESULTS SUMMARY")
-        print("=" * 80)
-        print(f"File Name              : {result.file_name}")
-        print(f"Speakers Detected      : {', '.join(result.speakers_detected)}")
-        print(f"Total Timeline Events  : {len(result.analysis.timeline)}")
-
-        if result.analysis.agent_context:
-            ctx = result.analysis.agent_context
-            print(f"Summary                : {ctx.summary}")
-            print(f"Escalation Detected    : {'YES [ALERT]' if ctx.escalation_detected else 'No'}")
-            print(f"Interruption Count     : {ctx.interruption_count}")
-            print(f"Total Overtalk Seconds : {ctx.total_overtalk_seconds:.2f}s")
-            print(f"Overtalk Ratio         : {ctx.overtalk_ratio * 100:.2f}%")
-            print(f"Speaker Sentiments     : {ctx.primary_speaker_sentiments}")
-
-            if ctx.flagged_anomalies:
-                print("\nFlagged Anomalies / Friction Events:")
-                for anomaly in ctx.flagged_anomalies:
-                    print(f"  - {anomaly}")
-
-        print("\n" + "=" * 80)
-        print(" CHRONOLOGICAL TIMELINE (With Overlap & Interruption Tracking)")
-        print("=" * 80)
-        for ev in result.analysis.timeline:
-            sem = ev.semantic_emotion[0].label.value if ev.semantic_emotion else "N/A"
-            ac = ev.acoustic_emotion[0].label.value if ev.acoustic_emotion else "N/A"
-            overlap_tag = ""
-            if ev.is_interruption:
-                overlap_tag += f" [INTERRUPT: {ev.overlap_duration:.2f}s]"
-            elif ev.interrupted_by:
-                overlap_tag += f" [CUT OFF by {ev.interrupted_by}]"
-            elif ev.overlap_duration > 0:
-                overlap_tag += f" [OVERLAP: {ev.overlap_duration:.2f}s]"
-
-            print(
-                f"[{ev.start_time:06.2f}s - {ev.end_time:06.2f}s] "
-                f'{ev.speaker:<11} | Text: {sem:<7} | Tone: {ac:<7}{overlap_tag} | "{ev.text}"'
-            )
-
-    asyncio.run(run_test())

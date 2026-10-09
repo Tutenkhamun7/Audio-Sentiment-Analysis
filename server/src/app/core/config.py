@@ -1,170 +1,189 @@
-from functools import lru_cache
-from pathlib import Path
-from typing import Any, Optional
-from dotenv import find_dotenv
-from pydantic import Field, field_validator
+"""Configuration and device routing for app service."""
+
+from __future__ import annotations
+
+import os
+from typing import Optional
+
+import torch
+from dotenv import find_dotenv, load_dotenv
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Dynamically resolve potential .env file locations
-_CORE_DIR = Path(__file__).resolve().parent
-_SERVER_DIR = _CORE_DIR.parents[2]  # server directory (where .env resides)
-_REPO_DIR = _SERVER_DIR.parent  # project root directory
-
-_ENV_CANDIDATES = [
-    str(_SERVER_DIR / ".env"),
-    str(_REPO_DIR / ".env"),
-    str(Path.cwd() / ".env"),
-    find_dotenv(),
-]
-_RESOLVED_ENV_FILES = tuple(dict.fromkeys([p for p in _ENV_CANDIDATES if p and Path(p).is_file()]))
+load_dotenv(find_dotenv(usecwd=True))
 
 
 class Settings(BaseSettings):
-    """
-    Application configuration managed via Pydantic BaseSettings.
-    Values can be configured through environment variables or a .env file.
-    """
+    """Global configuration with granular device placement."""
 
     model_config = SettingsConfigDict(
-        env_file=_RESOLVED_ENV_FILES or ".env",
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    # --- Hardware & Device Controls ---
-    device: str = Field(
-        default="cuda",
-        description="Global fallback device ('cuda' or 'cpu'). Used when model-specific device is not set.",
-    )
-    whisper_device: Optional[str] = Field(
-        default=None,
-        description="Target compute device for Faster-Whisper ('cuda' or 'cpu'). Defaults to `device`.",
+    # -------------------------------------------------------------
+    # 1. Device Placement (Granular: swap between CPU & CUDA anytime)
+    # -------------------------------------------------------------
+    default_device: str = Field(
+        default="cuda:0" if torch.cuda.is_available() else "cpu",
+        validation_alias=AliasChoices("DEFAULT_DEVICE", "DEVICE"),
+        description="Default execution device when component-specific device is not set.",
     )
     diarization_device: Optional[str] = Field(
         default=None,
-        description="Target compute device for Pyannote speaker diarization ('cuda' or 'cpu'). Defaults to `device`.",
+        validation_alias=AliasChoices("DIARIZATION_DEVICE"),
+        description="Device for pyannote diarization ('cpu', 'cuda', 'cuda:0')",
     )
-    emotion_device: str = Field(
-        default="cpu",
-        description="Target compute device for semantic and acoustic emotion models ('cuda' or 'cpu').",
-    )
-    ffmpeg_bin_path: Optional[str] = Field(
+    separation_device: Optional[str] = Field(
         default=None,
-        description="Optional directory path containing FFmpeg DLLs/binaries on Windows.",
+        validation_alias=AliasChoices("SEPARATION_DEVICE"),
+        description="Device for SepFormer speech separation ('cpu', 'cuda', 'cuda:0')",
+    )
+    asr_device: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("ASR_DEVICE", "WHISPER_DEVICE"),
+        description="Device for faster-whisper ('cpu', 'cuda', 'cuda:0')",
+    )
+    alignment_device: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("ALIGNMENT_DEVICE"),
+        description="Device for Wav2Vec2 CTC forced alignment ('cpu', 'cuda', 'cuda:0')",
+    )
+    acoustic_device: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("ACOUSTIC_DEVICE", "EMOTION_DEVICE"),
+        description="Device for emotion2vec / acoustic encoder ('cpu', 'cuda', 'cuda:0')",
+    )
+    semantic_device: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("SEMANTIC_DEVICE"),
+        description="Device for semantic LLM / text classifier ('cpu', 'cuda', 'cuda:0')",
     )
 
-    # --- Model Selection ---
-    whisper_model: str = Field(
-        default="large-v3-turbo",
-        description="Whisper model size or HuggingFace repo (e.g. 'large-v3-turbo', 'medium', 'small', 'base').",
+    def get_device(self, component: str) -> str:
+        """Resolve the active execution device for a specific component.
+
+        Falls back to default_device if component override is not specified.
+        If 'cuda' is requested but CUDA is unavailable, safely falls back to 'cpu'.
+        """
+        device_str = getattr(self, f"{component}_device", None) or self.default_device
+        device_str = device_str.strip().lower()
+        if device_str.startswith("cuda") and not torch.cuda.is_available():
+            return "cpu"
+        return device_str
+
+    # -------------------------------------------------------------
+    # 2. Audio Processing Parameters
+    # -------------------------------------------------------------
+    target_sr: int = Field(default=16000, description="Internal sample rate (Hz)")
+    stereo_corr_threshold: float = Field(
+        default=0.6,
+        description="Correlation threshold below which 2-channel audio is treated as clean stereo",
     )
-    whisper_compute_type: Optional[str] = Field(
-        default=None,
-        description="Quantization/compute type ('float16', 'int8', 'int8_float16', 'bfloat16'). Defaults to auto-select based on device.",
+    stereo_energy_ratio_min: float = Field(
+        default=0.05,
+        description="Minimum energy ratio required between channels for stereo split",
+    )
+
+    # -------------------------------------------------------------
+    # 3. Model Identifiers & Tokens
+    # -------------------------------------------------------------
+    hf_token: Optional[str] = Field(
+        default_factory=lambda: os.environ.get("HF_TOKEN"),
+        validation_alias=AliasChoices("HF_TOKEN"),
     )
     pyannote_model: str = Field(
         default="pyannote/speaker-diarization-community-1",
-        description="Pyannote speaker diarization pipeline name or HuggingFace repo (e.g. 'pyannote/speaker-diarization-community-1', 'pyannote/speaker-diarization-3.1').",
+        validation_alias=AliasChoices("PYANNOTE_MODEL"),
     )
-    hf_token: Optional[str] = Field(
+    sepformer_model: str = Field(
+        default="speechbrain/sepformer-wsj02mix",
+        validation_alias=AliasChoices("SEPFORMER_MODEL"),
+    )
+    whisper_model: str = Field(
+        default="large-v3-turbo",
+        validation_alias=AliasChoices("WHISPER_MODEL"),
+    )
+    whisper_compute_type: Optional[str] = Field(
         default=None,
-        description="HuggingFace access token for gated models like Pyannote.",
+        validation_alias=AliasChoices("WHISPER_COMPUTE_TYPE"),
+        description="Override compute type: 'float16', 'int8', etc. If None, auto-selects based on device.",
     )
-    num_speakers: Optional[int] = Field(
-        default=None,
-        description="Exact number of speakers to detect if known in advance (None for automatic detection).",
+    alignment_model: str = Field(
+        default="wav2vec2-base-960h",
+        validation_alias=AliasChoices("ALIGNMENT_MODEL"),
     )
-    min_speakers: Optional[int] = Field(
-        default=None,
-        description="Minimum number of speakers to detect (None for automatic detection).",
+    acoustic_encoder: str = Field(
+        default="emotion2vec",
+        validation_alias=AliasChoices("CONVAUDIO_STAGE4__ENCODER", "ACOUSTIC_ENCODER"),
     )
-    max_speakers: Optional[int] = Field(
-        default=None,
-        description="Maximum number of speakers to detect (None for automatic detection).",
+    semantic_model: str = Field(
+        default="cardiffnlp/twitter-roberta-base-sentiment-latest",
+        validation_alias=AliasChoices("SEMANTIC_MODEL"),
     )
-    split_by_speaker: bool = Field(
+
+    # -------------------------------------------------------------
+    # 4. Pipeline & Overlap Tuning
+    # -------------------------------------------------------------
+    enable_overlap_separation: bool = Field(
         default=True,
-        description="Whether to split audio by speakers via Pyannote diarization. When False, treats audio as single unified speaker.",
+        validation_alias=AliasChoices("SEPARATE_OVERLAP"),
+        description="Whether to run SepFormer on collision segments",
     )
-
-    # --- Semantic & Qwen / OpenRouter Selection ---
-    semantic_engine: str = Field(
-        default="distilroberta",
-        description="Semantic scoring engine ('distilroberta', 'qwen', or 'openrouter').",
+    overlap_padding_s: float = Field(
+        default=0.2,
+        description="Padding in seconds added to overlap slices before SepFormer inference",
     )
-    openrouter_api_key: Optional[str] = Field(
-        default=None,
-        description="API Key for OpenRouter or OpenAI-compatible endpoint.",
+    min_overlap_duration_s: float = Field(
+        default=0.05,
+        description="Minimum overlap collision duration to trigger SepFormer",
     )
-    openrouter_base_url: str = Field(
-        default="https://openrouter.ai/api/v1",
-        description="Base URL for OpenRouter or local OpenAI-compatible endpoint (e.g. vLLM or Ollama).",
+    interrupt_window_s: float = Field(
+        default=1.0,
+        description="Window (s) in which a speaker yielding during a collision counts as interrupted",
     )
-    qwen_model: str = Field(
-        default="qwen/qwen-2.5-72b-instruct",
-        description="Qwen model identifier on OpenRouter or local endpoint (e.g. 'qwen/qwen-2.5-72b-instruct', 'qwen/qwen3.8-27b').",
-    )
-
-    # --- ASR & Segmentation Tuning ---
-    whisper_beam_size: int = Field(
-        default=5,
-        description="Beam size for transcription decoding.",
-    )
-    whisper_language: Optional[str] = Field(
-        default="en",
-        description="Transcription language code (e.g., 'en', 'es', or None for auto-detect).",
+    min_speech_turn_s: float = Field(
+        default=0.4,
+        description="Turns shorter than this will abstain from acoustic affect prediction",
     )
     vad_filter: bool = Field(
         default=False,
-        description="Whether to enable Silero VAD filtering in Faster-Whisper.",
+        validation_alias=AliasChoices("VAD_FILTER"),
+        description="VAD filter flag for faster-whisper",
     )
-    segment_min_duration: float = Field(
-        default=2.0,
-        description="Minimum duration in seconds for an utterance segment.",
+    asr_collar_s: float = Field(
+        default=0.15,
+        description="Padding in seconds added before onset and after offset of turn slices to conserve initial consonants",
     )
-    segment_max_duration: float = Field(
-        default=6.0,
-        description="Maximum duration in seconds for an utterance segment before splitting.",
+    max_merge_gap_s: float = Field(
+        default=0.8,
+        description="Maximum silence gap in seconds between consecutive same-speaker turns to merge",
     )
-    segment_max_gap: float = Field(
-        default=0.5,
-        description="Maximum pause gap in seconds between words to merge within the same speaker turn.",
+    min_turn_duration_s: float = Field(
+        default=0.25,
+        description="Minimum duration in seconds below which empty turns are discarded",
+    )
+    min_word_prob: float = Field(
+        default=0.0,
+        description="Minimum word probability threshold to prune hallucinated murmur words (default 0.0 preserves all speech)",
+    )
+    whisper_initial_prompt: Optional[str] = Field(
+        default="Customer service call in Bangalore, Marathahalli, airport cab booking, KA 9515, SMS driver details.",
+        validation_alias=AliasChoices("WHISPER_INITIAL_PROMPT"),
+        description="Initial prompt context for Faster-Whisper to guide proper nouns and accents",
+    )
+    ffmpeg_bin_path: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("FFMPEG_BIN_PATH"),
+        description="Path to directory containing ffmpeg binaries/DLLs on Windows",
     )
 
-    @field_validator(
-        "whisper_device",
-        "diarization_device",
-        "whisper_compute_type",
-        "whisper_language",
-        "hf_token",
-        "openrouter_api_key",
-        mode="before",
-    )
-    @classmethod
-    def normalize_empty_strings(cls, v: Any) -> Any:
-        """Converts empty or whitespace strings into None for clean parameter passing."""
-        if isinstance(v, str) and not v.strip():
-            return None
-        return v
 
-    @field_validator("num_speakers", "min_speakers", "max_speakers", mode="before")
-    @classmethod
-    def normalize_empty_integers(cls, v: Any) -> Any:
-        """Converts empty strings into None for integer fields."""
-        if v is None or (isinstance(v, str) and not v.strip()):
-            return None
-        return int(v)
-
-    @property
-    def effective_whisper_device(self) -> str:
-        return (self.whisper_device or self.device).lower()
-
-    @property
-    def effective_diarization_device(self) -> str:
-        return (self.diarization_device or self.device).lower()
+# Global settings singleton
+settings = Settings()
 
 
-@lru_cache()
 def get_settings() -> Settings:
-    """Returns a cached singleton instance of Settings."""
-    return Settings()
+    """Return the global Settings singleton."""
+    return settings

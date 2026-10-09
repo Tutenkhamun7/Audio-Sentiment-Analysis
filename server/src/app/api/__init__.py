@@ -1,10 +1,6 @@
-from fastapi import APIRouter
+"""FastAPI application and route definitions for app."""
 
-from app.api.analyze import router as analyze_router
-from app.api.health import router as health_router
+from app.api.app import app, create_app
+from app.api.routes import router
 
-api_router = APIRouter()
-api_router.include_router(health_router)
-api_router.include_router(analyze_router)
-
-__all__ = ["api_router", "analyze_router", "health_router"]
+__all__ = ["app", "create_app", "router"]

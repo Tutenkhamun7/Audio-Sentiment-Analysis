@@ -14,16 +14,16 @@ import sys
 from pathlib import Path
 
 # Add server directory to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / " src\))
 
 import soundfile as sf
 import torch
 import torchaudio
 
-from src3.core.audio import load_audio_from_file
-from src3.core.model_registry import ModelRegistry
-from src3.engine.diarizer import run_diarization
-from src3.engine.overlap_separator import separate_overlaps_in_memory
+from app.core.audio import load_audio_from_file
+from app.core.model_registry import ModelRegistry
+from app.engine.diarizer import run_diarization
+from app.engine.overlap_separator import separate_overlaps_in_memory
 
 
 def export_collision_demonstration(audio_path: str, output_dir: str = "runs/demo_separated_audio") -> None:
@@ -102,3 +102,4 @@ if __name__ == "__main__":
     import sys
     test_audio = sys.argv[1] if len(sys.argv) > 1 else r"C:\Users\Anvay\Downloads\test.wav"
     export_collision_demonstration(test_audio)
+
