@@ -85,7 +85,16 @@ class Settings(BaseSettings):
         default=0.05,
         description="Minimum energy ratio required between channels for stereo split",
     )
-
+    enable_loudness_normalization: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ENABLE_LOUDNESS_NORMALIZATION"),
+        description="Apply a uniform gain so quiet/far-from-mic"
+    )
+    target_loudness_dbfs: float = Field(
+        default=-20.0,
+        validation_alias = AliasChoices("TARGET_LOUDNESS_DBFS"),
+        description="Target RMS Loudness (dbFS) for normalization"
+    )
     # -------------------------------------------------------------
     # 3. Model Identifiers & Tokens
     # -------------------------------------------------------------
@@ -96,6 +105,48 @@ class Settings(BaseSettings):
     pyannote_model: str = Field(
         default="pyannote/speaker-diarization-community-1",
         validation_alias=AliasChoices("PYANNOTE_MODEL"),
+    )
+    diarization_clustering_threshold: Optional[float] = Field(
+        default=None,
+        validation_alias=AliasChoices("DIARIZATION_CLUSTERING_THRESHOLD"),
+        description="Override pyannote clustering distance threshold. Raise (e.g. 0.75-0.8) if "
+        "distinct speakers are being merged into one; lower (e.g. 0.5-0.6) if one speaker is "
+        "being split into several. None uses the pipeline's pretrained default.",
+    )
+    diarization_min_duration_off: Optional[float] = Field(
+        default=None,
+        validation_alias=AliasChoices("DIARIZATION_MIN_DURATION_OFF"),
+        description="Override pyannote segmentation min_duration_off (s). Lower values let the "
+        "pipeline react to faster speaker handovers instead of smoothing them into one turn.",
+    )
+
+    diarization_min_duration_on: Optional[float] = Field(
+        default=None,
+        validation_alias=AliasChoices("DIARIZATION_MIN_DURATION_ON"),
+        description="Override pyannote segmentation onset activation threshold(0-1).",
+    )
+
+    diarization_onset: Optional[float] = Field(
+        default = None,
+        validation_alias = AliasChoices("DIARIZATION_ONSET"),
+        description="Override pyannote segmentation"
+    )
+    whisper_vad_threshold: float = Field(
+        default = 0.35,
+        validation_alias = AliasChoices("WHISPER_VAD_THRESHOLD"),
+        description="Silero VAD speech probability threshold used vad_filter is enabled."
+    )
+    min_speaker_duration_s: float = Field(
+        default=0.3,
+        validation_alias=AliasChoices("MIN_SPEAKER_DURATION_S"),
+        description="Minimum total speech duration for a diarized speaker cluster to be kept "
+        "as-is. Clusters below this are reassigned (not dropped) to the nearest valid speaker.",
+    )
+    whisper_language: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("WHISPER_LANGUAGE"),
+        description="Force a specific ISO-639-1 language code for transcription. None lets "
+        "faster-whisper auto-detect language per call, needed for multilingual audio.",
     )
     sepformer_model: str = Field(
         default="speechbrain/sepformer-wsj02mix",
@@ -167,6 +218,11 @@ class Settings(BaseSettings):
     min_word_prob: float = Field(
         default=0.0,
         description="Minimum word probability threshold to prune hallucinated murmur words (default 0.0 preserves all speech)",
+    )
+    whisper_no_speech_threshold: float = Field(
+        default=0.3,
+        validation_alias=AliasChoices("WHISPER_NO_SPEECH_THRESHOLD"),
+        description="Faster-whisper no speech_threshold."
     )
     whisper_initial_prompt: Optional[str] = Field(
         default="Customer service call in Bangalore, Marathahalli, airport cab booking, KA 9515, SMS driver details.",

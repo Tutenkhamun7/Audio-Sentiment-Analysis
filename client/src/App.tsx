@@ -241,13 +241,17 @@ export function App() {
               </div>
               <div className="space-y-1">
                 <h4 className="text-xs sm:text-sm font-semibold text-foreground">
-                  Backend Endpoint Connection Notice
+                  {errorMessage.toLowerCase().includes("missing required parameter") ||
+                  errorMessage.toLowerCase().includes("invalid parameter") ||
+                  errorMessage.toLowerCase().includes("validation failed")
+                    ? "Missing or Invalid Parameter"
+                    : "Backend Endpoint Notice"}
                 </h4>
                 <p className="text-xs text-muted-foreground">
                   {errorMessage.includes("Failed to fetch") ||
                   errorMessage.includes("NetworkError") ||
                   errorMessage.includes("Connection refused")
-                    ? "Could not reach backend API at http://localhost:8000/api/v1/audio/analyze. You can start your local FastAPI server, or load the pre-computed multimodal demo dataset below to test all studio features."
+                    ? "Could not reach backend API at http://localhost:8000/api/v1/analyze. You can start your local FastAPI server, or load the pre-computed multimodal demo dataset below to test all studio features."
                     : errorMessage}
                 </p>
               </div>

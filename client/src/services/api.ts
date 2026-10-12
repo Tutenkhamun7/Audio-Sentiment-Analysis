@@ -6,7 +6,7 @@ import type {
 import { ALL_EMOTIONS } from "@/lib/constants";
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1/audio/analyze";
+  import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1/analyze";
 
 export interface AnalyzeAudioResponse {
   segments: TimelineSegment[];
@@ -26,18 +26,36 @@ interface RawEmotion {
 
 interface RawTimelineEvent {
   segment_id?: number;
+  turn_id?: string;
   speaker?: string;
   start_time?: number;
   end_time?: number;
+  start?: number;
+  end?: number;
+  duration?: number;
   text?: string;
   semantic_emotion?: RawEmotion[];
   acoustic_emotion?: RawEmotion[];
+  emotion?: {
+    dominant_emotion?: string;
+    scores?: Record<string, number>;
+    valence?: number;
+    arousal?: number;
+    abstained?: boolean;
+    abstain_reason?: string;
+  };
+  sentiment?: {
+    label?: string;
+    score?: number;
+  };
   is_conflict?: boolean;
   is_ambiguous?: boolean;
   conflict_detail?: string | null;
   is_interruption?: boolean;
   interrupted_by?: string | null;
+  interrupts?: string | null;
   overlap_duration?: number;
+  overlap_ratio?: number;
 }
 
 /**
@@ -230,8 +248,111 @@ function normalizeEmotion(raw: RawEmotion): EmotionScore {
 }
 
 /**
+ * Converts TurnDetail.emotion (dominant_emotion, scores record) into normalized EmotionScore[]
+ */
+function convertEmotionAnalysisToEmotions(emotion?: {
+  dominant_emotion?: string;
+  scores?: Record<string, number>;
+}): EmotionScore[] {
+  if (!emotion) {
+    return createFullEmotionDistribution({ label: "NEUTRAL", score: 0.8 });
+  }
+
+  if (emotion.scores && Object.keys(emotion.scores).length > 0) {
+    const entries = Object.entries(emotion.scores).sort((a, b) => b[1] - a[1]);
+    const top1 = entries[0];
+    const top2 = entries[1];
+    return createFullEmotionDistribution(
+      { label: top1[0].toUpperCase(), score: Math.min(1, Math.max(0.1, top1[1])) },
+      top2 ? { label: top2[0].toUpperCase(), score: Math.min(0.9, Math.max(0.05, top2[1])) } : undefined
+    );
+  }
+
+  if (emotion.dominant_emotion) {
+    return createFullEmotionDistribution({
+      label: emotion.dominant_emotion.toUpperCase(),
+      score: 0.85,
+    });
+  }
+
+  return createFullEmotionDistribution({ label: "NEUTRAL", score: 0.8 });
+}
+
+/**
+ * Converts TurnDetail.sentiment (label, score) into normalized EmotionScore[]
+ */
+function convertSentimentToEmotions(sentiment?: {
+  label?: string;
+  score?: number;
+}): EmotionScore[] {
+  if (!sentiment || !sentiment.label) {
+    return createFullEmotionDistribution({ label: "NEUTRAL", score: 0.8 });
+  }
+  return createFullEmotionDistribution({
+    label: sentiment.label.toUpperCase(),
+    score: typeof sentiment.score === "number" ? Math.min(1, Math.max(0.1, sentiment.score)) : 0.85,
+  });
+}
+
+/**
+ * Parses HTTP error response with detailed support for FastAPI / Pydantic validation errors (HTTP 422)
+ */
+async function parseApiError(response: Response): Promise<string> {
+  try {
+    const cloned = response.clone();
+    const json = await cloned.json();
+    if (json && json.detail) {
+      if (Array.isArray(json.detail)) {
+        // FastAPI / Pydantic validation error array:
+        // [{ loc: ["body", "file"], msg: "Field required", type: "missing" }, ...]
+        const formattedErrors = json.detail.map(
+          (err: { loc?: unknown[]; msg?: string; type?: string }) => {
+            const locArr = Array.isArray(err.loc) ? err.loc : [];
+            const meaningfulLoc = locArr.filter(
+              (p) => !["body", "query", "header", "form"].includes(String(p))
+            );
+            const fieldName =
+              meaningfulLoc.length > 0
+                ? meaningfulLoc.join(".")
+                : locArr.join(".") || "parameter";
+
+            const msg = err.msg || "Invalid value";
+            if (err.type === "missing" || msg.toLowerCase().includes("field required")) {
+              return `Missing required parameter: '${fieldName}' (${msg})`;
+            }
+            return `Invalid parameter '${fieldName}': ${msg}`;
+          }
+        );
+        return `Validation failed: ${formattedErrors.join("; ")}`;
+      }
+      if (typeof json.detail === "string") {
+        return json.detail;
+      }
+      return JSON.stringify(json.detail);
+    }
+    if (json && typeof json.message === "string") {
+      return json.message;
+    }
+  } catch {
+    // If not JSON, fall back to reading response text below
+  }
+
+  try {
+    const text = await response.text();
+    if (text) {
+      return `Server error (${response.status}): ${text}`;
+    }
+  } catch {
+    // Ignore read errors
+  }
+
+  return `Server responded with HTTP ${response.status}: ${response.statusText || "Request failed"}`;
+}
+
+/**
  * Sends audio file to backend endpoint with resilient extraction
- * matching the server's AudioResponse (which houses timeline in analysis.timeline)
+ * matching the server's AnalyzeResponse (turns, metrics, speakers)
+ * and legacy schemas.
  */
 export async function analyzeAudioApi(
   file: File | Blob,
@@ -245,52 +366,43 @@ export async function analyzeAudioApi(
     formData.append("file", file, filename);
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for ML model inference
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      clearTimeout(timeoutId);
-      const abortErr = new Error("Analysis cancelled by user");
-      abortErr.name = "AbortError";
-      throw abortErr;
-    }
-    externalSignal.addEventListener("abort", () => {
-      clearTimeout(timeoutId);
-      controller.abort();
-    });
+  if (externalSignal?.aborted) {
+    const abortErr = new Error("Analysis cancelled by user");
+    abortErr.name = "AbortError";
+    throw abortErr;
   }
 
   try {
     const response = await fetch(API_BASE_URL, {
       method: "POST",
       body: formData,
-      signal: controller.signal,
+      signal: externalSignal,
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      throw new Error(
-        `Server responded with HTTP ${response.status}: ${errorText || response.statusText}`
-      );
+      const errorMsg = await parseApiError(response);
+      throw new Error(errorMsg);
     }
 
     const json = await response.json();
 
     // Comprehensive extraction supporting:
-    // 1. AudioResponse schema: json.analysis.timeline
-    // 2. Direct timeline: json.timeline
-    // 3. Direct segments: json.segments
-    // 4. Wrapped data: json.data.timeline or json.data.segments or json.data
-    // 5. Bare array: json
+    // 1. FastAPI AnalyzeResponse schema: json.turns
+    // 2. AudioResponse schema: json.analysis.timeline or json.analysis.turns
+    // 3. Direct timeline: json.timeline
+    // 4. Direct segments: json.segments
+    // 5. Wrapped data: json.data.turns or json.data.timeline or json.data.segments or json.data
+    // 6. Bare array: json
     let rawSegments: RawTimelineEvent[] = [];
 
     if (Array.isArray(json)) {
       rawSegments = json;
     } else if (json && typeof json === "object") {
-      if (json.analysis && Array.isArray(json.analysis.timeline)) {
+      if (Array.isArray(json.turns)) {
+        rawSegments = json.turns;
+      } else if (json.analysis && Array.isArray(json.analysis.turns)) {
+        rawSegments = json.analysis.turns;
+      } else if (json.analysis && Array.isArray(json.analysis.timeline)) {
         rawSegments = json.analysis.timeline;
       } else if (json.analysis && Array.isArray(json.analysis.segments)) {
         rawSegments = json.analysis.segments;
@@ -298,6 +410,8 @@ export async function analyzeAudioApi(
         rawSegments = json.timeline;
       } else if (Array.isArray(json.segments)) {
         rawSegments = json.segments;
+      } else if (json.data && Array.isArray(json.data.turns)) {
+        rawSegments = json.data.turns;
       } else if (json.data && Array.isArray(json.data.timeline)) {
         rawSegments = json.data.timeline;
       } else if (json.data && Array.isArray(json.data.segments)) {
@@ -307,48 +421,114 @@ export async function analyzeAudioApi(
       } else {
         const availableKeys = Object.keys(json).join(", ");
         throw new Error(
-          `Unexpected response format from audio analyze endpoint. Available top-level keys: [${availableKeys}]. Expected 'analysis.timeline' or 'segments'.`
+          `Unexpected response format from audio analyze endpoint. Available top-level keys: [${availableKeys}]. Expected 'turns' or 'timeline'.`
         );
       }
     } else {
       throw new Error("Invalid response received from audio analyze endpoint: expected JSON object or array.");
     }
 
-    // Normalize timeline segments
+    // Normalize timeline segments supporting TurnDetail and TimelineSegment
     const segments: TimelineSegment[] = rawSegments.map((item, index) => {
-      const semantic = Array.isArray(item.semantic_emotion)
-        ? item.semantic_emotion.map(normalizeEmotion)
-        : [];
-      const acoustic = Array.isArray(item.acoustic_emotion)
-        ? item.acoustic_emotion.map(normalizeEmotion)
-        : [];
+      // 1. Semantic emotion extraction
+      let semantic: EmotionScore[] = [];
+      if (Array.isArray(item.semantic_emotion) && item.semantic_emotion.length > 0) {
+        semantic = item.semantic_emotion.map(normalizeEmotion);
+      } else if (item.sentiment && typeof item.sentiment === "object") {
+        semantic = convertSentimentToEmotions(item.sentiment);
+      } else {
+        semantic = createFullEmotionDistribution({ label: "NEUTRAL", score: 0.8 });
+      }
+
+      // 2. Acoustic emotion extraction
+      let acoustic: EmotionScore[] = [];
+      if (Array.isArray(item.acoustic_emotion) && item.acoustic_emotion.length > 0) {
+        acoustic = item.acoustic_emotion.map(normalizeEmotion);
+      } else if (item.emotion && typeof item.emotion === "object") {
+        acoustic = convertEmotionAnalysisToEmotions(item.emotion);
+      } else {
+        acoustic = createFullEmotionDistribution({ label: "NEUTRAL", score: 0.8 });
+      }
+
+      const startTime =
+        typeof item.start_time === "number"
+          ? item.start_time
+          : typeof item.start === "number"
+          ? item.start
+          : 0;
+
+      const endTime =
+        typeof item.end_time === "number"
+          ? item.end_time
+          : typeof item.end === "number"
+          ? item.end
+          : typeof item.duration === "number"
+          ? startTime + item.duration
+          : 0;
+
+      const primarySemantic = semantic[0]?.label || "NEUTRAL";
+      const primaryAcoustic = acoustic[0]?.label || "NEUTRAL";
+      const isConflict =
+        item.is_conflict !== undefined
+          ? Boolean(item.is_conflict)
+          : primarySemantic !== primaryAcoustic &&
+            primarySemantic !== "NEUTRAL" &&
+            primaryAcoustic !== "NEUTRAL";
+
+      const conflictDetail =
+        item.conflict_detail ||
+        (isConflict
+          ? `Acoustic-Semantic Incongruence: Semantic tone indicates '${primarySemantic}', but vocal prosody indicates '${primaryAcoustic}'.`
+          : null);
+
+      const overlapDur =
+        typeof item.overlap_duration === "number"
+          ? item.overlap_duration
+          : typeof item.overlap_ratio === "number"
+          ? Number(
+              (
+                (item.duration || Math.max(0, endTime - startTime)) *
+                item.overlap_ratio
+              ).toFixed(3)
+            )
+          : 0;
+
+      let segId = index + 1;
+      if (typeof item.segment_id === "number") {
+        segId = item.segment_id;
+      } else if (typeof item.turn_id === "string") {
+        const parsed = parseInt(item.turn_id.replace(/\D/g, ""), 10);
+        if (!isNaN(parsed)) segId = parsed + 1;
+      }
 
       return {
-        segment_id: typeof item.segment_id === "number" ? item.segment_id : index + 1,
+        segment_id: segId,
         speaker: item.speaker || "Speaker 1",
-        start_time: typeof item.start_time === "number" ? item.start_time : 0,
-        end_time: typeof item.end_time === "number" ? item.end_time : 0,
+        start_time: Number(startTime.toFixed(3)),
+        end_time: Number(endTime.toFixed(3)),
         text: item.text || "",
         semantic_emotion: semantic,
         acoustic_emotion: acoustic,
-        is_conflict: Boolean(item.is_conflict),
+        is_conflict: isConflict,
         is_ambiguous: Boolean(item.is_ambiguous),
-        conflict_detail: item.conflict_detail ?? null,
+        conflict_detail: conflictDetail,
         is_interruption: Boolean(item.is_interruption),
         interrupted_by: item.interrupted_by ?? null,
-        overlap_duration: typeof item.overlap_duration === "number" ? item.overlap_duration : 0,
+        overlap_duration: overlapDur,
       };
     });
 
     // Detect speakers
     let speakers: string[] = [];
     if (json && typeof json === "object") {
-      if (Array.isArray(json.speakers_detected)) {
+      if (Array.isArray(json.speakers)) {
+        speakers = json.speakers;
+      } else if (Array.isArray(json.speakers_detected)) {
         speakers = json.speakers_detected;
+      } else if (json.analysis && Array.isArray(json.analysis.speakers)) {
+        speakers = json.analysis.speakers;
       } else if (json.analysis && Array.isArray(json.analysis.speakers_detected)) {
         speakers = json.analysis.speakers_detected;
-      } else if (Array.isArray(json.speakers)) {
-        speakers = json.speakers;
       }
     }
 
@@ -360,20 +540,45 @@ export async function analyzeAudioApi(
     }
 
     const resolvedFilename =
-      (json && typeof json === "object" && (json.file_name || json.filename)) || filename;
+      (json && typeof json === "object" && (json.call_id || json.file_name || json.filename)) ||
+      filename;
 
     const overallTranscript =
       (json && typeof json === "object" && json.analysis?.overall_transcript) ||
       (json && typeof json === "object" && json.overall_transcript) ||
       segments.map((s) => `${s.speaker}: ${s.text}`).join("\n");
 
-    const agentContext =
+    // Agent synthesis extraction or synthesis from CallMetrics
+    let agentContext: AgentSynthesis | null =
       (json && typeof json === "object" && json.analysis?.agent_context) ||
       (json && typeof json === "object" && json.agent_context) ||
       null;
 
+    if (!agentContext && json && typeof json === "object" && json.metrics) {
+      const metrics = json.metrics;
+      const speakerList = speakers.join(", ");
+      agentContext = {
+        summary: `Analyzed ${segments.length} conversational turns across ${
+          metrics.speaker_count || speakers.length
+        } speakers (${speakerList}). Total speech: ${metrics.total_speech_s || 0}s, overlap: ${
+          metrics.overlap_s || 0
+        }s (${Math.round((metrics.overlap_ratio || 0) * 100)}%). Pipeline branch: ${
+          metrics.branch_used || "default"
+        }.`,
+        escalation_detected: (metrics.interruption_count || 0) > 2,
+        primary_speaker_sentiments: {},
+        flagged_anomalies: segments
+          .filter((s) => s.is_conflict && s.conflict_detail)
+          .map((s) => `${s.speaker} turn at ${s.start_time}s: ${s.conflict_detail}`),
+        interruption_count: metrics.interruption_count || 0,
+        total_overtalk_seconds: metrics.overlap_s || 0,
+        overtalk_ratio: metrics.overlap_ratio || 0,
+      };
+    }
+
     const totalDuration =
-      segments.length > 0 ? segments[segments.length - 1].end_time : undefined;
+      (json && typeof json === "object" && json.metrics?.duration_s) ||
+      (segments.length > 0 ? segments[segments.length - 1].end_time : undefined);
 
     return {
       segments,
@@ -387,14 +592,17 @@ export async function analyzeAudioApi(
   } catch (err: unknown) {
     if (
       externalSignal?.aborted ||
-      (err instanceof Error && (err.name === "AbortError" || err.message.includes("cancelled by user")))
+      (err instanceof Error &&
+        (err.name === "AbortError" ||
+          err.message.includes("cancelled by user") ||
+          err.message.includes("stopped by user")))
     ) {
       const abortErr = new Error("Analysis request was stopped by user.");
       abortErr.name = "AbortError";
       throw abortErr;
     }
     const message = err instanceof Error ? err.message : String(err);
-    console.warn("Backend API request failed or returned unexpected shape:", message);
+    console.warn("Backend API request failed or returned error:", message);
     throw new Error(message, { cause: err });
   }
 }

@@ -59,6 +59,21 @@ def to_mono(waveform: torch.Tensor) -> torch.Tensor:
         return waveform.mean(dim=0, keepdim=True)
     return waveform
 
+def normalize_loudness(
+    waveform: torch.Tensor,
+    target_dbfs:float =-20.0,
+    max_gain:float =20.0
+) -> torch.Tensor:
+    """Apply a single uniform gain sp quiet/far-mic recordings reach a level consistent
+    with what a diarization/VAD/ASR models expect, without altering inter-channel balance
+    (same scalar gain is applied to every channel, preserving stereo-split detection)."""
+    rms = torch.sqrt(torch.mean(waveform**2) + 1e-9)
+    if rms < 1e-6:
+        return waveform
+
+    target_rms = 10**(target_dbfs/20.0)
+    gain = min(float(target_rms/rms),max_gain)
+    return torch.clamp(waveform*gain,-1.0,1.0)
 
 def slice_waveform(
     waveform: torch.Tensor,

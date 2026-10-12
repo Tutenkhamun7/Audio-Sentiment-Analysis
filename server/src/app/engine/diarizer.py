@@ -106,7 +106,8 @@ def run_diarization(
     if num_speakers is not None and num_speakers > 0:
         kwargs["num_speakers"] = num_speakers
 
-    annotation = pipeline(audio_input, **kwargs)
+    with torch.inference_mode():
+        annotation = pipeline(audio_input, **kwargs)
     if hasattr(annotation, "speaker_diarization"):
         annotation = annotation.speaker_diarization
 
@@ -121,12 +122,42 @@ def run_diarization(
         raw_turns.append(RawTurn(speaker=spk_str, start=s, end=e))
         speaker_totals[spk_str] = speaker_totals.get(spk_str, 0.0) + (e - s)
 
-    # Filter phantom speakers with negligible speech duration
+    logger.info(
+        "Diarization detected %d raw speaker cluster(s), totals (s): %s",
+        len(speaker_totals),
+        {k: round(v, 2) for k, v in speaker_totals.items()},
+    )
+
+    # Identify phantom clusters with negligible total speech (noise/artifacts).
     valid_speakers = {
         spk for spk, dur in speaker_totals.items() if dur >= min_speaker_duration_s
     }
     if not valid_speakers:
         valid_speakers = set(speaker_totals.keys())
+
+    # Reassign (never drop) turns belonging to phantom clusters to the nearest
+    # valid speaker in time, so brief genuine interjections aren't deleted from
+    # the transcript entirely.
+    raw_turns.sort(key=lambda t: (t.start, t.end))
+    if len(valid_speakers) < len(speaker_totals):
+        for i, t in enumerate(raw_turns):
+            if t.speaker in valid_speakers:
+                continue
+            nearest_spk: Optional[str] = None
+            best_gap = float("inf")
+            for j in range(i - 1, -1, -1):
+                if raw_turns[j].speaker in valid_speakers:
+                    nearest_spk = raw_turns[j].speaker
+                    best_gap = t.start - raw_turns[j].end
+                    break
+            for j in range(i + 1, len(raw_turns)):
+                if raw_turns[j].speaker in valid_speakers:
+                    gap = raw_turns[j].start - t.end
+                    if gap < best_gap:
+                        nearest_spk = raw_turns[j].speaker
+                    break
+            if nearest_spk is not None:
+                t.speaker = nearest_spk
 
     filtered_turns = [t for t in raw_turns if t.speaker in valid_speakers]
     filtered_turns.sort(key=lambda t: (t.start, t.end))

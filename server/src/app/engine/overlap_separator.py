@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 import torchaudio
@@ -115,6 +115,14 @@ def separate_overlaps_in_memory(
         embedder = registry.get_speaker_embedder()
     except Exception as e:
         logger.debug("Speaker embedder unavailable for permutation matching: %s", e)
+
+    if embedder is not None:
+        logger.info("Overlap permutation matching: using pyannote neural speaker embeddings.")
+    else:
+        logger.warning(
+            "Overlap permutation matching: pyannote embedder unavailable, falling back to "
+            "13-dim MFCC timbre profile (less reliable on phone-quality/multilingual audio)."
+        )
 
     for spk in diarization.speakers:
         spk_turns = [t for t in diarization.turns if t.speaker == spk]

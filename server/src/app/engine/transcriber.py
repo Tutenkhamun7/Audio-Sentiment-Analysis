@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, List
+from typing import Any, List, Optional
 
 import numpy as np
 import torch
 
+from app.core.config import settings
 from app.core.model_registry import ModelRegistry
 from app.engine.diarizer import RawTurn
 from app.schemas.response import WordTiming
@@ -24,6 +25,7 @@ def transcribe_speaker_turns(
     collar_s: float = 0.4,
     all_turns: Optional[List[RawTurn]] = None,
     min_word_prob: float = 0.35,
+    language: Optional[str] = None,
 ) -> None:
     """Transcribe each speaker turn directly in memory without disk writes.
 
@@ -37,15 +39,19 @@ def transcribe_speaker_turns(
 
     wav_np = speaker_wav.squeeze(0).cpu().numpy().astype(np.float32)
 
+    vad_parameters = {"threshold": settings.whisper_vad_threshold} if vad_filter else None
+
     # Transcribe entire speaker stream in memory with word timestamps
     segments, info = whisper.transcribe(
         wav_np,
+        language=language,
         vad_filter=vad_filter,
+        vad_parameters=vad_parameters,
         word_timestamps=True,
         initial_prompt=initial_prompt,
         condition_on_previous_text=False,
         compression_ratio_threshold=2.4,
-        no_speech_threshold=0.6,
+        no_speech_threshold=settings.whisper_no_speech_threshold,
         temperature=0.0,
     )
     seg_list = list(segments)
@@ -106,3 +112,11 @@ def transcribe_speaker_turns(
             # No words spoken in this turn slice (e.g. breath, cough, silence)
             turn.text = None
             turn.words = []
+            logger.warning(
+                "No words transcribed for speaker=%s turn," \
+                "despite diarized speech duration.",
+                turn.speaker,
+                turn.start,
+                turn.end,
+                turn.duration,
+            )

@@ -46,6 +46,29 @@ class ModelRegistry:
                 self.config.pyannote_model,
                 token=self.config.hf_token,
             )
+
+            # Optional hyperparameter overrides to correct auto-clustering collapsing
+            # distinct speakers into one cluster (or over-splitting a single speaker).
+            overrides: dict[str, Any] = {}
+            if self.config.diarization_clustering_threshold is not None:
+                overrides.setdefault("clustering", {})["threshold"] = self.config.diarization_clustering_threshold
+            if self.config.diarization_min_duration_off is not None:
+                overrides.setdefault("segmentation", {})["min_duration_off"] = self.config.diarization_min_duration_off
+            if self.config.diarization_min_duration_on is not None:
+                overrides.setdefault("segmentation", {})["min_duration_on"] = self.config.diarization_min_duration_on
+            if self.config.diarization_onset is not None:
+                overrides.setdefault("segmentation", {})["onset"] = self.config.diarization_onset
+            if overrides and pipeline is not None:
+                try:
+                    pipeline.instantiate(overrides)
+                    logger.info("Applied diarization hyperparameter overrides: %s", overrides)
+                except Exception as e:
+                    logger.warning(
+                        "Could not apply diarization overrides %s (%s); using pipeline defaults.",
+                        overrides,
+                        e,
+                    )
+
             if pipeline is not None and dev.startswith("cuda"):
                 pipeline.to(torch.device(dev))
             self._diarizer = pipeline

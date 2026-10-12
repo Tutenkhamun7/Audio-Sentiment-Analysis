@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import time
 from typing import Dict, List, Optional
@@ -91,6 +92,7 @@ class AudioAnalysisOrchestrator:
                 sr=sr,
                 num_speakers=opts.num_speakers,
                 min_overlap_duration_s=settings.min_overlap_duration_s,
+                min_speaker_duration_s=settings.min_speaker_duration_s,
                 merge_consecutive=opts.merge_consecutive,
                 max_merge_gap_s=settings.max_merge_gap_s,
                 min_turn_duration_s=settings.min_turn_duration_s,
@@ -122,6 +124,12 @@ class AudioAnalysisOrchestrator:
         # ---------------------------------------------------------
         # Step 4: Transcription & Forced Alignment (Per Speaker)
         # ---------------------------------------------------------
+        # Flush PyTorch cached allocations from diarization & separation
+        # to ensure CTranslate2 Faster-Whisper has maximum clean VRAM headroom.
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         prompt = opts.initial_prompt or settings.whisper_initial_prompt
         for spk in speakers:
             spk_audio = speaker_streams.get(spk, torch.zeros(total_samples))
@@ -137,6 +145,7 @@ class AudioAnalysisOrchestrator:
                 collar_s=settings.asr_collar_s,
                 all_turns=all_raw_turns,
                 min_word_prob=settings.min_word_prob,
+                language=settings.whisper_language,
             )
 
             # 4b. Align & Snap turn boundaries via CTC Wav2Vec2
@@ -240,6 +249,11 @@ class AudioAnalysisOrchestrator:
         )
 
         elapsed = round(time.perf_counter() - t0, 3)
+
+        # Free cached memory allocations to keep VRAM clean for subsequent requests
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         return AnalyzeResponse(
             call_id=call_id,
