@@ -350,3 +350,102 @@ def test_group_aligned_words_into_turns_dialogue():
     assert turns[1].text == "It was fantastic."
 
 
+def test_acoustic_confidence_gating_and_abstention(monkeypatch):
+    """Verify that ambiguous/low-confidence acoustic predictions default to neutral or abstain."""
+    from app.engine.acoustic import extract_turn_emotions
+    from app.engine.diarizer import RawTurn
+    from app.core.model_registry import ModelRegistry
+
+    # Mock pipe that returns ambiguous scores: angry is barely highest, but confidence is low
+    class MockPipeAmbiguous:
+        def generate(self, *args, **kwargs):
+            return [{
+                "labels": ["angry", "neutral", "happy"],
+                "scores": [0.38, 0.35, 0.27],
+            }]
+
+    # Mock pipe that returns extremely low confidence (< 0.35)
+    class MockPipeLowConf:
+        def generate(self, *args, **kwargs):
+            return [{
+                "labels": ["angry", "neutral", "happy"],
+                "scores": [0.32, 0.31, 0.30],
+            }]
+
+    # Mock pipe that returns clear confident emotion
+    class MockPipeConfident:
+        def generate(self, *args, **kwargs):
+            return [{
+                "labels": ["angry", "neutral", "happy"],
+                "scores": [0.85, 0.10, 0.05],
+            }]
+
+    reg = ModelRegistry.get_instance()
+    dummy_wav = torch.randn(1, 16000)
+
+    # Case 1: Ambiguous distribution (margin = 0.03 < 0.10, top = 0.38 < 0.50) -> should default to neutral
+    monkeypatch.setattr(reg, "get_acoustic_encoder", lambda: MockPipeAmbiguous())
+    t1 = RawTurn(speaker="SPEAKER_00", start=0.0, end=1.0)
+    extract_turn_emotions(dummy_wav, [t1], sr=16000, min_acoustic_confidence=0.50, min_top_margin=0.10)
+    assert t1.emotion.dominant_emotion == "neutral"
+    assert t1.emotion.abstained is False
+
+    # Case 2: Extreme low confidence (< 0.35) -> should abstain with LOW_ACOUSTIC_CONF
+    monkeypatch.setattr(reg, "get_acoustic_encoder", lambda: MockPipeLowConf())
+    t2 = RawTurn(speaker="SPEAKER_00", start=0.0, end=1.0)
+    extract_turn_emotions(dummy_wav, [t2], sr=16000, min_acoustic_confidence=0.50, min_top_margin=0.10)
+    assert t2.emotion.abstained is True
+    assert t2.emotion.abstain_reason == "LOW_ACOUSTIC_CONF"
+
+    # Case 3: High confidence emotion (top = 0.85 >= 0.50, margin = 0.75 >= 0.10) -> preserves angry
+    monkeypatch.setattr(reg, "get_acoustic_encoder", lambda: MockPipeConfident())
+    t3 = RawTurn(speaker="SPEAKER_00", start=0.0, end=1.0)
+    extract_turn_emotions(dummy_wav, [t3], sr=16000, min_acoustic_confidence=0.50, min_top_margin=0.10)
+    assert t3.emotion.dominant_emotion == "angry"
+    assert t3.emotion.abstained is False
+
+
+def test_merge_overlap_transcriptions(monkeypatch):
+    """Verify that overlap collisions replace mixed words with per-speaker separated transcriptions."""
+    from app.engine.diarizer import OverlapWindow
+    from app.schemas.response import WordTiming
+    from app.services.orchestrator import _merge_overlap_transcriptions
+    import app.services.orchestrator as orch
+
+    # Overlap interval from 2.0 to 3.0 between SPEAKER_00 and SPEAKER_01
+    ov = OverlapWindow(start=2.0, end=3.0, speaker_a="SPEAKER_00", speaker_b="SPEAKER_01")
+    speaker_streams = {
+        "SPEAKER_00": torch.randn(16000 * 5),
+        "SPEAKER_01": torch.randn(16000 * 5),
+    }
+
+    base_words = [
+        WordTiming(word="Before", start=0.5, end=1.0),
+        WordTiming(word="CollisionJumble", start=2.2, end=2.8),
+        WordTiming(word="After", start=3.5, end=4.0),
+    ]
+
+    # Mock transcribe_stream_words so it outputs distinct words per speaker
+    def mock_transcribe(speaker_wav, **kwargs):
+        return [WordTiming(word="SeparatedWord", start=0.2, end=0.6)]
+
+    monkeypatch.setattr(orch, "transcribe_stream_words", mock_transcribe)
+
+    merged = _merge_overlap_transcriptions(
+        base_words=base_words,
+        speaker_streams=speaker_streams,
+        overlaps=[ov],
+        sr=16000,
+    )
+
+    # CollisionJumble should be replaced by separated words with speaker attribution
+    words_text = [w.word for w in merged]
+    assert "Before" in words_text
+    assert "After" in words_text
+    assert "CollisionJumble" not in words_text
+    sep_words = [w for w in merged if w.word == "SeparatedWord"]
+    assert len(sep_words) == 2
+    assert {w.speaker for w in sep_words} == {"SPEAKER_00", "SPEAKER_01"}
+
+
+

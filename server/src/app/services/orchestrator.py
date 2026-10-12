@@ -41,6 +41,75 @@ from app.schemas.response import (
 logger = logging.getLogger(__name__)
 
 
+def _merge_overlap_transcriptions(
+    base_words: List[WordTiming],
+    speaker_streams: Dict[str, torch.Tensor],
+    overlaps: list,
+    sr: int = 16000,
+    initial_prompt: Optional[str] = None,
+    language: Optional[str] = None,
+    min_word_prob: float = 0.0,
+    padding_s: float = 0.15,
+) -> List[WordTiming]:
+    """Refine transcription in overlap collisions by transcribing separated speaker streams."""
+    if not overlaps or not speaker_streams or not base_words:
+        return base_words
+
+    modified_words = list(base_words)
+
+    for ov in overlaps:
+        spk_a, spk_b = ov.speaker_a, ov.speaker_b
+        s_time, e_time = float(ov.start), float(ov.end)
+        if (e_time - s_time) < 0.08:
+            continue
+
+        pad_s = max(0.0, s_time - padding_s)
+        pad_e = e_time + padding_s
+
+        sep_words: list[WordTiming] = []
+        for spk in (spk_a, spk_b):
+            if spk not in speaker_streams:
+                continue
+            stream = speaker_streams[spk]
+            s_idx = max(0, int(pad_s * sr))
+            e_idx = min(stream.shape[-1], int(pad_e * sr))
+            if (e_idx - s_idx) < int(sr * 0.05):
+                continue
+
+            slice_wav = stream[s_idx:e_idx]
+            if slice_wav.abs().mean() < 1e-4:
+                continue
+
+            transcribed = transcribe_stream_words(
+                speaker_wav=slice_wav,
+                sr=sr,
+                vad_filter=False,
+                initial_prompt=initial_prompt,
+                min_word_prob=min_word_prob,
+                language=language,
+            )
+
+            for tw in transcribed:
+                abs_s = round(pad_s + tw.start, 3)
+                abs_e = round(pad_s + tw.end, 3)
+                mid = (abs_s + abs_e) / 2.0
+                if (s_time - 0.1) <= mid <= (e_time + 0.1):
+                    tw.start = abs_s
+                    tw.end = abs_e
+                    tw.speaker = spk
+                    sep_words.append(tw)
+
+        if sep_words:
+            surviving_words = [
+                w for w in modified_words
+                if not (s_time <= ((w.start + w.end) / 2.0) <= e_time)
+            ]
+            modified_words = surviving_words + sep_words
+            modified_words.sort(key=lambda w: (w.start, w.end))
+
+    return modified_words
+
+
 class AudioAnalysisOrchestrator:
     """Coordinates in-memory diarization, overlap separation, ASR, and emotion extraction."""
 
@@ -166,6 +235,8 @@ class AudioAnalysisOrchestrator:
                         sr=sr,
                         min_speech_turn_s=settings.min_speech_turn_s,
                         collar_s=settings.acoustic_collar_s,
+                        min_acoustic_confidence=settings.min_acoustic_confidence,
+                        min_top_margin=settings.min_acoustic_margin,
                     )
                 per_speaker_turns[spk] = spk_turns
 
@@ -185,6 +256,18 @@ class AudioAnalysisOrchestrator:
                 min_word_prob=settings.min_word_prob,
                 language=settings.whisper_language,
             )
+
+            # Refine overlap collisions using separated speaker streams when available
+            if opts.enable_overlap_separation and overlaps_list and speaker_streams:
+                raw_words = _merge_overlap_transcriptions(
+                    base_words=raw_words,
+                    speaker_streams=speaker_streams,
+                    overlaps=overlaps_list,
+                    sr=sr,
+                    initial_prompt=prompt,
+                    language=settings.whisper_language,
+                    min_word_prob=settings.min_word_prob,
+                )
 
             # Map words to diarization turns via temporal intersection and floor inertia
             diar_turns_for_mapping = diar_res.turns if (branch == "mono_separated" and 'diar_res' in locals()) else []
@@ -216,15 +299,31 @@ class AudioAnalysisOrchestrator:
                     sr=sr,
                 )
 
-            # Acoustic Emotion Extraction on turn slices
+            # Acoustic Emotion Extraction on turn slices (using isolated speaker streams when available)
             if opts.predict_emotion and valid_raw_turns:
-                extract_turn_emotions(
-                    speaker_wav=mono_continuous,
-                    turns=valid_raw_turns,
-                    sr=sr,
-                    min_speech_turn_s=settings.min_speech_turn_s,
-                    collar_s=settings.acoustic_collar_s,
-                )
+                if speaker_streams and branch == "mono_separated":
+                    for spk, stream in speaker_streams.items():
+                        spk_turns = [t for t in valid_raw_turns if t.speaker == spk]
+                        if spk_turns:
+                            extract_turn_emotions(
+                                speaker_wav=stream,
+                                turns=spk_turns,
+                                sr=sr,
+                                min_speech_turn_s=settings.min_speech_turn_s,
+                                collar_s=settings.acoustic_collar_s,
+                                min_acoustic_confidence=settings.min_acoustic_confidence,
+                                min_top_margin=settings.min_acoustic_margin,
+                            )
+                else:
+                    extract_turn_emotions(
+                        speaker_wav=mono_continuous,
+                        turns=valid_raw_turns,
+                        sr=sr,
+                        min_speech_turn_s=settings.min_speech_turn_s,
+                        collar_s=settings.acoustic_collar_s,
+                        min_acoustic_confidence=settings.min_acoustic_confidence,
+                        min_top_margin=settings.min_acoustic_margin,
+                    )
 
             # Tag acoustic backchannels
             valid_raw_turns = assemble_interleaved_dialogue(

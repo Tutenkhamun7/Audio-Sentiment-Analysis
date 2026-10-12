@@ -143,7 +143,14 @@ def separate_overlaps_in_memory(
             clean_audio = torch.cat(clean_pieces)
             ref_profiles[spk] = extract_acoustic_profile(clean_audio, sr, embedder=embedder)
         else:
-            ref_profiles[spk] = extract_acoustic_profile(speaker_streams[spk], sr, embedder=embedder)
+            all_pieces = []
+            for t in spk_turns:
+                s_i = max(0, int(t.start * sr))
+                e_i = min(total_samples, int(t.end * sr))
+                if e_i > s_i:
+                    all_pieces.append(mono_1d[s_i:e_i])
+            spk_audio = torch.cat(all_pieces) if all_pieces else torch.zeros(sr)
+            ref_profiles[spk] = extract_acoustic_profile(spk_audio, sr, embedder=embedder)
 
     # 3. Obtain SepFormer from registry
     try:

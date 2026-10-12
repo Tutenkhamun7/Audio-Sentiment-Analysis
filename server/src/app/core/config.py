@@ -208,6 +208,18 @@ class Settings(BaseSettings):
         default=0.4,
         description="Turns shorter than this will abstain from acoustic affect prediction",
     )
+    min_acoustic_confidence: float = Field(
+        default=0.50,
+        validation_alias=AliasChoices("MIN_ACOUSTIC_CONFIDENCE"),
+        description="Minimum emotion2vec top-1 probability to trust acoustic classification. "
+        "Below this threshold, the turn defaults to 'neutral' to prevent false classifications.",
+    )
+    min_acoustic_margin: float = Field(
+        default=0.10,
+        validation_alias=AliasChoices("MIN_ACOUSTIC_MARGIN"),
+        description="Minimum gap between top-1 and top-2 emotion probabilities. "
+        "Below this, the model is considered ambiguous and defaults to 'neutral'.",
+    )
     vad_filter: bool = Field(
         default=False,
         validation_alias=AliasChoices("VAD_FILTER"),

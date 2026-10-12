@@ -50,6 +50,8 @@ def extract_turn_emotions(
     sr: int = 16000,
     min_speech_turn_s: float = 0.4,
     collar_s: float = 0.08,
+    min_acoustic_confidence: float = 0.50,
+    min_top_margin: float = 0.10,
 ) -> None:
     """Predict acoustic affect on turns in RAM with strict quality abstention rules."""
     if not turns:
@@ -117,8 +119,19 @@ def extract_turn_emotions(
                         clean_lbl = str(lbl).split("/")[-1].strip().lower()
                         if clean_lbl and clean_lbl != "<unk>":
                             scores[clean_lbl] = round(float(sc), 4)
+
                     if scores:
-                        dominant = max(scores.items(), key=lambda kv: kv[1])[0]
+                        sorted_emos = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+                        top_label, top_score = sorted_emos[0]
+                        second_score = sorted_emos[1][1] if len(sorted_emos) > 1 else 0.0
+                        margin = top_score - second_score
+
+                        # Gate: If top score is below confidence threshold or top-1/top-2 margin is too narrow,
+                        # the acoustic model is uncertain or the utterance is emotionally flat/neutral.
+                        if top_score < min_acoustic_confidence or margin < min_top_margin:
+                            dominant = "neutral"
+                        else:
+                            dominant = top_label
                 elif "key" in item:
                     dominant = str(item["key"]).lower()
 
@@ -126,6 +139,19 @@ def extract_turn_emotions(
             valence, arousal = compute_dimensional_affect(scores)
             if not scores:
                 valence, arousal = EMOTION_COORDINATES.get(dominant, (0.0, 0.0))
+
+            # Abstention Rule: Extreme uncertainty across entire affect distribution (<0.35 max score)
+            top_prob = max(scores.values()) if scores else 1.0
+            if scores and top_prob < 0.35:
+                turn.emotion = EmotionAnalysis(
+                    dominant_emotion="neutral",
+                    scores=scores,
+                    valence=valence,
+                    arousal=arousal,
+                    abstained=True,
+                    abstain_reason="LOW_ACOUSTIC_CONF",
+                )
+                continue
 
             turn.emotion = EmotionAnalysis(
                 dominant_emotion=dominant,

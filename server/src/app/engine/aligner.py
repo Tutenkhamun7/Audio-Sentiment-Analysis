@@ -41,6 +41,10 @@ def assign_words_to_speakers(
     current_speaker = fallback_speaker
 
     for i, w in enumerate(words):
+        if getattr(w, "speaker", None) is not None:
+            current_speaker = w.speaker
+            continue
+
         w_dur = max(0.001, w.end - w.start)
         overlap_by_spk: dict[str, float] = {}
 
