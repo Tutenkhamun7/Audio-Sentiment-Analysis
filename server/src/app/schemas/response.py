@@ -13,6 +13,7 @@ class WordTiming(BaseModel):
     start: float
     end: float
     confidence: float = 1.0
+    speaker: Optional[str] = None
 
 
 class EmotionAnalysis(BaseModel):
@@ -22,15 +23,18 @@ class EmotionAnalysis(BaseModel):
     scores: Dict[str, float] = Field(default_factory=dict)
     valence: Optional[float] = None
     arousal: Optional[float] = None
+    is_sarcastic: bool = False
+    incongruence_score: float = 0.0
     abstained: bool = False
     abstain_reason: Optional[str] = None
 
 
 class SentimentAnalysis(BaseModel):
-    """Semantic text sentiment classification."""
+    """Semantic text sentiment and affect classification."""
 
     label: str = "neutral"
     score: float = 1.0
+    scores: Dict[str, float] = Field(default_factory=dict)
 
 
 class TurnDetail(BaseModel):
@@ -49,6 +53,8 @@ class TurnDetail(BaseModel):
     interrupted_by: Optional[str] = None
     interrupts: Optional[str] = None
     overlap_ratio: float = 0.0
+    turn_type: str = "speech"
+    is_sarcastic: bool = False
 
 
 class CallMetrics(BaseModel):

@@ -142,26 +142,34 @@ def test_analyze_endpoint_no_split(client: TestClient):
 
 
 def test_semantic_sentiment_analysis():
-    """Verify semantic sentiment classification and batching."""
-    from app.engine.semantic import analyze_text_sentiment, analyze_texts_batch
+    """Verify semantic emotion classification, context conditioning, and batching."""
+    from app.engine.semantic import analyze_text_affect, analyze_text_sentiment, analyze_texts_batch
 
     lbl, score = analyze_text_sentiment("Thank you so much, this is great!")
-    assert lbl == "positive"
+    assert lbl in ("happy", "positive")
     assert score > 0.5
 
     lbl_neg, score_neg = analyze_text_sentiment("This is a terrible delay and problem.")
-    assert lbl_neg == "negative"
+    assert lbl_neg in ("angry", "sad", "fearful", "disgusted", "negative")
     assert score_neg > 0.5
 
-    batch = analyze_texts_batch(["Thank you!", "Horrible delay.", "The cab is outside."])
+    # Full distribution scores
+    dominant, conf, scores = analyze_text_affect("Thank you so much, this is great!")
+    assert dominant in ("happy", "positive")
+    assert "happy" in scores or "neutral" in scores
+
+    batch = analyze_texts_batch(
+        ["Thank you!", "Horrible delay.", "The cab is outside."],
+        prior_texts=[None, "We missed our flight.", None],
+    )
     assert len(batch) == 3
-    assert batch[0][0] == "positive"
-    assert batch[1][0] == "negative"
+    assert batch[0][0] in ("happy", "positive")
+    assert batch[1][0] in ("angry", "sad", "fearful", "disgusted", "negative")
 
 
 def test_turn_sentiment_schema():
-    """Verify SentimentAnalysis integrates cleanly in TurnDetail."""
-    from app.schemas.response import SentimentAnalysis, TurnDetail
+    """Verify SentimentAnalysis integrates cleanly in TurnDetail with scores and sarcasm."""
+    from app.schemas.response import EmotionAnalysis, SentimentAnalysis, TurnDetail
 
     td = TurnDetail(
         turn_id="turn_001",
@@ -169,9 +177,176 @@ def test_turn_sentiment_schema():
         start=0.0,
         end=2.0,
         duration=2.0,
-        text="Hello, thank you!",
-        sentiment=SentimentAnalysis(label="positive", score=0.98),
+        text="Oh fantastic, my cab is 40 minutes late.",
+        emotion=EmotionAnalysis(
+            dominant_emotion="angry",
+            is_sarcastic=True,
+            incongruence_score=0.82,
+        ),
+        sentiment=SentimentAnalysis(label="happy", score=0.88, scores={"happy": 0.88, "neutral": 0.12}),
+        is_sarcastic=True,
     )
     assert td.sentiment is not None
-    assert td.sentiment.label == "positive"
-    assert td.sentiment.score == 0.98
+    assert td.sentiment.label == "happy"
+    assert td.sentiment.scores["happy"] == 0.88
+    assert td.is_sarcastic is True
+    assert td.emotion.is_sarcastic is True
+    assert td.emotion.incongruence_score == 0.82
+
+
+def test_multilingual_turn_segmentation():
+    """Verify pause splitting, abbreviation protection, and multilingual CJK/Indic terminal punctuation."""
+    from app.engine.segmenter import group_words_into_turns
+    from app.schemas.response import WordTiming
+
+    test_words = [
+        # Sentence 1 with Dr. abbreviation (should NOT split on Dr.)
+        WordTiming(word="Hello", start=1.0, end=1.3),
+        WordTiming(word="Dr.", start=1.4, end=1.7),
+        WordTiming(word="Smith,", start=1.8, end=2.2),
+        WordTiming(word="welcome.", start=2.3, end=2.8),
+        # 1.5s natural pause -> should trigger turn split
+        WordTiming(word="I", start=4.3, end=4.5),
+        WordTiming(word="have", start=4.6, end=4.8),
+        WordTiming(word="your", start=4.9, end=5.1),
+        WordTiming(word="ticket.", start=5.2, end=5.5),
+        # Multilingual CJK terminal punctuation (。)
+        WordTiming(word="非常感谢您。", start=5.6, end=6.2),
+    ]
+
+    turns = group_words_into_turns(test_words, speaker="SPEAKER_00", max_pause_s=1.2)
+    assert len(turns) == 2
+    assert "Dr. Smith, welcome." in turns[0].text
+    assert turns[0].start == 1.0
+    assert turns[0].end == 2.8
+    assert turns[1].start == 4.3
+    assert "非常感谢您。" in turns[1].text
+
+
+def test_backchannel_classification():
+    """Verify acoustic backchannels (<0.8s during other speaker's turn) are correctly tagged."""
+    from app.engine.diarizer import RawTurn
+    from app.engine.segmenter import assemble_interleaved_dialogue
+
+    t1 = RawTurn(speaker="SPEAKER_00", start=1.0, end=4.0, text="I was wondering about the ticket")
+    # Quick backchannel "Yeah" while SPEAKER_00 is talking
+    t_bc = RawTurn(speaker="SPEAKER_01", start=2.0, end=2.4, text="Yeah")
+    t2 = RawTurn(speaker="SPEAKER_00", start=4.2, end=6.0, text="and if it is confirmed yet.")
+
+    interleaved = assemble_interleaved_dialogue(
+        {"SPEAKER_00": [t1, t2], "SPEAKER_01": [t_bc]},
+        backchannel_duration_s=0.8,
+    )
+
+    assert len(interleaved) == 3
+    assert interleaved[1].speaker == "SPEAKER_01"
+    assert interleaved[1].turn_type == "backchannel"
+    assert interleaved[0].turn_type == "speech"
+    assert interleaved[2].turn_type == "speech"
+
+
+def test_monologue_duration_capping():
+    """Verify long run-on monologues without pauses are split at duration caps."""
+    from app.engine.segmenter import group_words_into_turns
+    from app.schemas.response import WordTiming
+
+    # 12-second continuous speech with no pauses > 0.2s
+    words = [
+        WordTiming(word=f"word_{i}", start=round(i * 0.5, 2), end=round((i * 0.5) + 0.3, 2))
+        for i in range(24)
+    ]
+
+    turns = group_words_into_turns(
+        words,
+        speaker="SPEAKER_00",
+        max_pause_s=1.2,
+        soft_turn_duration_s=4.0,
+        max_turn_duration_s=6.0,
+    )
+
+    # Monologue should be capped and split into at least 2 turns
+    assert len(turns) >= 2
+    for t in turns:
+        assert t.duration <= 7.0
+
+
+def test_context_conditioned_sarcasm_and_affect():
+    """Verify that prior context conditions text affect and detects modal incongruence."""
+    from app.engine.semantic import format_context_prompt, analyze_texts_batch
+
+    # 1. Verify prompt formatting within 512 token budget
+    prompt = format_context_prompt("Oh, fantastic!", prior_text="We have cancelled your flight.")
+    assert "Context: We have cancelled your flight." in prompt
+    assert "Utterance: Oh, fantastic!" in prompt
+
+    # 2. Compare standalone vs context-conditioned affect
+    batch = analyze_texts_batch(
+        ["Thank you so much, this is wonderful!", "Thank you so much, this is wonderful!"],
+        prior_texts=[None, "You completely ruined my day."],
+    )
+    # Standalone praise yields happy / joy
+    assert batch[0][0] in ("happy", "positive")
+    # Contextualized with negative situation drops joy and activates negative affect
+    scores_context = batch[1][2]
+    assert scores_context.get("happy", 0.0) < batch[0][2].get("happy", 1.0)
+
+
+def test_whisperx_word_speaker_assignment():
+    """Verify that continuous ASR words are mapped to speakers via temporal intersection and floor inertia."""
+    from app.engine.aligner import assign_words_to_speakers
+    from app.engine.diarizer import RawTurn
+    from app.schemas.response import WordTiming
+
+    # Diarization intervals:
+    # SPEAKER_00 speaks [0.0 - 2.5]
+    # SPEAKER_01 speaks [2.8 - 4.5]
+    diar_turns = [
+        RawTurn(speaker="SPEAKER_00", start=0.0, end=2.5),
+        RawTurn(speaker="SPEAKER_01", start=2.8, end=4.5),
+    ]
+
+    words = [
+        WordTiming(word="Tell", start=0.1, end=0.4),
+        WordTiming(word="me", start=0.45, end=0.7),
+        WordTiming(word="about", start=0.75, end=1.1),
+        WordTiming(word="Harrods.", start=1.15, end=1.8),
+        # Response by child after 1.1s gap
+        WordTiming(word="It", start=2.9, end=3.1),
+        WordTiming(word="was", start=3.15, end=3.35),
+        WordTiming(word="fantastic.", start=3.4, end=4.1),
+    ]
+
+    assigned = assign_words_to_speakers(words, diar_turns)
+
+    assert len(assigned) == 7
+    # First 4 words belong to SPEAKER_00
+    for w in assigned[:4]:
+        assert w.speaker == "SPEAKER_00"
+    # Next 3 words belong to SPEAKER_01
+    for w in assigned[4:]:
+        assert w.speaker == "SPEAKER_01"
+
+
+def test_group_aligned_words_into_turns_dialogue():
+    """Verify that mapped words are segmented into discrete conversation turns across speakers."""
+    from app.engine.segmenter import group_aligned_words_into_turns
+    from app.schemas.response import WordTiming
+
+    words = [
+        WordTiming(word="Tell", start=0.1, end=0.4, speaker="SPEAKER_00"),
+        WordTiming(word="me", start=0.45, end=0.7, speaker="SPEAKER_00"),
+        WordTiming(word="about", start=0.75, end=1.1, speaker="SPEAKER_00"),
+        WordTiming(word="Harrods.", start=1.15, end=1.8, speaker="SPEAKER_00"),
+        WordTiming(word="It", start=2.9, end=3.1, speaker="SPEAKER_01"),
+        WordTiming(word="was", start=3.15, end=3.35, speaker="SPEAKER_01"),
+        WordTiming(word="fantastic.", start=3.4, end=4.1, speaker="SPEAKER_01"),
+    ]
+
+    turns = group_aligned_words_into_turns(words)
+    assert len(turns) == 2
+    assert turns[0].speaker == "SPEAKER_00"
+    assert turns[0].text == "Tell me about Harrods."
+    assert turns[1].speaker == "SPEAKER_01"
+    assert turns[1].text == "It was fantastic."
+
+

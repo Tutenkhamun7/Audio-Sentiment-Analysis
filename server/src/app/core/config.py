@@ -170,8 +170,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CONVAUDIO_STAGE4__ENCODER", "ACOUSTIC_ENCODER"),
     )
     semantic_model: str = Field(
-        default="cardiffnlp/twitter-roberta-base-sentiment-latest",
+        default="j-hartmann/emotion-english-distilroberta-base",
         validation_alias=AliasChoices("SEMANTIC_MODEL"),
+    )
+    enable_sarcasm_detection: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ENABLE_SARCASM_DETECTION"),
+        description="Detect multimodal affect incongruence (e.g. positive words with angry tone)",
+    )
+    acoustic_collar_s: float = Field(
+        default=0.08,
+        validation_alias=AliasChoices("ACOUSTIC_COLLAR_S"),
+        description="Collar padding in seconds added to turn slices for emotion2vec prosody preservation",
     )
 
     # -------------------------------------------------------------
@@ -233,6 +243,30 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("FFMPEG_BIN_PATH"),
         description="Path to directory containing ffmpeg binaries/DLLs on Windows",
+    )
+
+    # -------------------------------------------------------------
+    # 5. Conversational Turn Segmentation Settings
+    # -------------------------------------------------------------
+    max_turn_pause_s: float = Field(
+        default=1.2,
+        validation_alias=AliasChoices("MAX_TURN_PAUSE_S"),
+        description="Pause threshold in seconds to split consecutive speech by the same speaker into a new turn",
+    )
+    soft_turn_duration_s: float = Field(
+        default=4.0,
+        validation_alias=AliasChoices("SOFT_TURN_DURATION_S"),
+        description="Minimum duration before sentence-terminal punctuation triggers a turn split",
+    )
+    max_turn_duration_s: float = Field(
+        default=8.0,
+        validation_alias=AliasChoices("MAX_TURN_DURATION_S"),
+        description="Hard maximum duration in seconds before a turn is forcibly split",
+    )
+    backchannel_threshold_s: float = Field(
+        default=0.8,
+        validation_alias=AliasChoices("BACKCHANNEL_THRESHOLD_S"),
+        description="Duration threshold below which concurrent interjections are tagged as backchannels",
     )
 
 

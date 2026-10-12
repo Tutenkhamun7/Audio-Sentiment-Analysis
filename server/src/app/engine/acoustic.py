@@ -27,11 +27,29 @@ EMOTION_COORDINATES: dict[str, tuple[float, float]] = {
 }
 
 
+def compute_dimensional_affect(scores: dict[str, float]) -> tuple[float, float]:
+    """Calculate continuous valence and arousal as the expectation across the affect distribution.
+
+    Prevents discrete argmax collapse where neutral plurality erases secondary affective intensity.
+    """
+    if not scores:
+        return 0.0, 0.0
+
+    total_prob = sum(scores.get(k, 0.0) for k in EMOTION_COORDINATES if k in scores)
+    if total_prob <= 1e-6:
+        return 0.0, 0.0
+
+    val = sum(scores.get(k, 0.0) * EMOTION_COORDINATES[k][0] for k in EMOTION_COORDINATES if k in scores) / total_prob
+    aro = sum(scores.get(k, 0.0) * EMOTION_COORDINATES[k][1] for k in EMOTION_COORDINATES if k in scores) / total_prob
+    return round(float(val), 3), round(float(aro), 3)
+
+
 def extract_turn_emotions(
     speaker_wav: torch.Tensor,
     turns: List[RawTurn],
     sr: int = 16000,
     min_speech_turn_s: float = 0.4,
+    collar_s: float = 0.08,
 ) -> None:
     """Predict acoustic affect on turns in RAM with strict quality abstention rules."""
     if not turns:
@@ -60,8 +78,8 @@ def extract_turn_emotions(
             )
             continue
 
-        s_idx = max(0, int(turn.start * sr))
-        e_idx = min(total_samples, int(turn.end * sr))
+        s_idx = max(0, int((turn.start - collar_s) * sr))
+        e_idx = min(total_samples, int((turn.end + collar_s) * sr))
         turn_audio = wav_1d[s_idx:e_idx]
 
         # Check energy
@@ -104,8 +122,10 @@ def extract_turn_emotions(
                 elif "key" in item:
                     dominant = str(item["key"]).lower()
 
-            # Estimate valence & arousal
-            valence, arousal = EMOTION_COORDINATES.get(dominant, (0.0, 0.0))
+            # Estimate continuous valence & arousal as distributional expectation
+            valence, arousal = compute_dimensional_affect(scores)
+            if not scores:
+                valence, arousal = EMOTION_COORDINATES.get(dominant, (0.0, 0.0))
 
             turn.emotion = EmotionAnalysis(
                 dominant_emotion=dominant,

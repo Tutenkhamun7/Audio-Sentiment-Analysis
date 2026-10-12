@@ -59,15 +59,26 @@ class ModelRegistry:
             if self.config.diarization_onset is not None:
                 overrides.setdefault("segmentation", {})["onset"] = self.config.diarization_onset
             if overrides and pipeline is not None:
-                try:
-                    pipeline.instantiate(overrides)
-                    logger.info("Applied diarization hyperparameter overrides: %s", overrides)
-                except Exception as e:
-                    logger.warning(
-                        "Could not apply diarization overrides %s (%s); using pipeline defaults.",
-                        overrides,
-                        e,
-                    )
+                defaults = pipeline.default_parameters() if hasattr(pipeline, "default_parameters") else {}
+                safe_overrides: dict[str, Any] = {}
+                for section, params in overrides.items():
+                    if section in defaults and isinstance(defaults[section], dict):
+                        valid_params = {k: v for k, v in params.items() if k in defaults[section]}
+                        if valid_params:
+                            safe_overrides[section] = valid_params
+                    elif section in defaults:
+                        safe_overrides[section] = params
+
+                if safe_overrides:
+                    try:
+                        pipeline.instantiate(safe_overrides)
+                        logger.info("Applied diarization hyperparameter overrides: %s", safe_overrides)
+                    except Exception as e:
+                        logger.warning(
+                            "Could not apply diarization overrides %s (%s); using pipeline defaults.",
+                            safe_overrides,
+                            e,
+                        )
 
             if pipeline is not None and dev.startswith("cuda"):
                 pipeline.to(torch.device(dev))
@@ -174,20 +185,22 @@ class ModelRegistry:
             try:
                 # Prioritize local cached files to prevent HF token expiration / network 401 errors
                 self._semantic_engine = pipeline(
-                    "sentiment-analysis",
+                    "text-classification",
                     model=self.config.semantic_model,
                     device=device_arg,
                     local_files_only=True,
                     truncation=True,
                     max_length=512,
+                    top_k=None,
                 )
             except Exception:
                 self._semantic_engine = pipeline(
-                    "sentiment-analysis",
+                    "text-classification",
                     model=self.config.semantic_model,
                     device=device_arg,
                     truncation=True,
                     max_length=512,
+                    top_k=None,
                 )
         return self._semantic_engine
 

@@ -120,3 +120,56 @@ def transcribe_speaker_turns(
                 turn.end,
                 turn.duration,
             )
+
+
+def transcribe_stream_words(
+    speaker_wav: torch.Tensor,
+    sr: int = 16000,
+    vad_filter: bool = False,
+    initial_prompt: Optional[str] = None,
+    min_word_prob: float = 0.0,
+    language: Optional[str] = None,
+) -> List[WordTiming]:
+    """Transcribe a full speaker audio stream directly in RAM and extract millisecond word timings."""
+    if speaker_wav.shape[-1] < int(sr * 0.1):
+        return []
+
+    registry = ModelRegistry.get_instance()
+    whisper = registry.get_whisper()
+
+    wav_np = speaker_wav.squeeze(0).cpu().numpy().astype(np.float32)
+    vad_parameters = {"threshold": settings.whisper_vad_threshold} if vad_filter else None
+
+    segments, info = whisper.transcribe(
+        wav_np,
+        language=language,
+        vad_filter=vad_filter,
+        vad_parameters=vad_parameters,
+        word_timestamps=True,
+        initial_prompt=initial_prompt,
+        condition_on_previous_text=False,
+        compression_ratio_threshold=2.4,
+        no_speech_threshold=settings.whisper_no_speech_threshold,
+        temperature=0.0,
+    )
+
+    words: list[WordTiming] = []
+    for s in segments:
+        if not s.words:
+            continue
+        for w in s.words:
+            prob = float(getattr(w, "probability", 0.9))
+            if prob < min_word_prob:
+                continue
+            clean = w.word.strip()
+            if clean:
+                words.append(
+                    WordTiming(
+                        word=clean,
+                        start=round(float(w.start), 3),
+                        end=round(float(w.end), 3),
+                        confidence=round(prob, 3),
+                    )
+                )
+
+    return words

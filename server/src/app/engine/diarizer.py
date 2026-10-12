@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 import torch
@@ -34,6 +34,10 @@ class RawTurn:
     speaker: str
     start: float
     end: float
+    text: Optional[str] = None
+    words: List[Any] = field(default_factory=list)
+    turn_type: str = "speech"
+    emotion: Optional[Any] = None
 
     @property
     def duration(self) -> float:
