@@ -63,21 +63,25 @@ def merge_consecutive_turns(
     if not turns:
         return []
 
+    spk_map: dict[str, list[RawTurn]] = {}
+    for t in turns:
+        spk_map.setdefault(t.speaker, []).append(t)
+
     merged: list[RawTurn] = []
-    current = RawTurn(speaker=turns[0].speaker, start=turns[0].start, end=turns[0].end)
+    for spk, spk_list in spk_map.items():
+        spk_list.sort(key=lambda t: (t.start, t.end))
+        current = RawTurn(speaker=spk, start=spk_list[0].start, end=spk_list[0].end)
+        for nxt in spk_list[1:]:
+            if (nxt.start - current.end) <= max_gap_s:
+                current.end = max(current.end, nxt.end)
+            else:
+                if current.duration >= min_duration_s:
+                    merged.append(current)
+                current = RawTurn(speaker=spk, start=nxt.start, end=nxt.end)
+        if current.duration >= min_duration_s:
+            merged.append(current)
 
-    for nxt in turns[1:]:
-        if nxt.speaker == current.speaker and (nxt.start - current.end) <= max_gap_s:
-            # Extend current turn across the pause
-            current.end = max(current.end, nxt.end)
-        else:
-            if current.duration >= min_duration_s:
-                merged.append(current)
-            current = RawTurn(speaker=nxt.speaker, start=nxt.start, end=nxt.end)
-
-    if current.duration >= min_duration_s:
-        merged.append(current)
-
+    merged.sort(key=lambda t: (t.start, t.end))
     return merged
 
 

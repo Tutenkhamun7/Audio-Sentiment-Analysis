@@ -1,17 +1,19 @@
 import React from "react";
-import { Waves, Moon, Sun, Sparkles, Activity } from "lucide-react";
+import { Waves, Moon, Sun, Sparkles, Activity, Cpu } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 
 interface HeaderProps {
   onLoadDemo?: () => void;
   hasResults?: boolean;
   onReset?: () => void;
+  onOpenArchitecture?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onLoadDemo,
   hasResults,
   onReset,
+  onOpenArchitecture,
 }) => {
   const { theme, setTheme } = useTheme();
 
@@ -53,12 +55,25 @@ export const Header: React.FC<HeaderProps> = ({
             <span>Studio Engine Active</span>
           </div>
 
+          {/* Engine Blueprint Modal Trigger (Go Technical) */}
+          {onOpenArchitecture && (
+            <button
+              onClick={onOpenArchitecture}
+              type="button"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/20 border border-primary/30 transition-all hover:scale-102 active:scale-95 cursor-pointer shadow-2xs"
+              title="Go Technical: View Server Architecture & Pipeline Flow Specification"
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>Engine Blueprint</span>
+            </button>
+          )}
+
           {/* Quick Demo Trigger */}
           {onLoadDemo && (
             <button
               onClick={onLoadDemo}
               type="button"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border/70 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border/70 transition-colors cursor-pointer"
               title="Load demo audio dialogue sample"
             >
               <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />

@@ -8,6 +8,7 @@ import { SynchronizedTranscript } from "@/components/SynchronizedTranscript";
 import { EmotionTimelineCards } from "@/components/EmotionTimelineCards";
 import { AgentSynthesisCard } from "@/components/AgentSynthesisCard";
 import { PostAnalysisSection } from "@/components/PostAnalysisSection";
+import { ArchitecturePresentationModal } from "@/components/ArchitecturePresentationModal";
 import {
   analyzeAudioApi,
   analyzeCallPostSessionApi,
@@ -27,6 +28,7 @@ import {
   RefreshCw,
   XCircle,
   Loader2,
+  Cpu,
 } from "lucide-react";
 
 type ActiveTab = "upload" | "record";
@@ -53,6 +55,9 @@ export function App() {
   // Post-call LLM analysis state
   const [postAnalysis, setPostAnalysis] = useState<PostCallAnalysis | null>(null);
   const [isPostAnalysisLoading, setIsPostAnalysisLoading] = useState<boolean>(false);
+
+  // Technical Architecture Presentation modal state
+  const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState<boolean>(false);
 
   // Cancel ongoing request
   const handleCancelAnalysis = useCallback(() => {
@@ -250,6 +255,7 @@ export function App() {
         onLoadDemo={handleLoadDemo}
         hasResults={!!analysisResult}
         onReset={handleReset}
+        onOpenArchitecture={() => setIsArchitectureModalOpen(true)}
       />
 
       {/* Main Studio Interface */}
@@ -257,7 +263,7 @@ export function App() {
         {/* Studio Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-6">
           <div className="space-y-1">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
                 Audio Emotion Studio
               </h1>
@@ -266,6 +272,16 @@ export function App() {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/80" />
                 <span>Live Studio</span>
               </div>
+              {/* Go Technical: Engine Blueprint Pill Button */}
+              <button
+                type="button"
+                onClick={() => setIsArchitectureModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-semibold bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 transition-all hover:scale-102 active:scale-95 cursor-pointer shadow-2xs"
+                title="Go Technical: Explore In-Memory Engine Blueprint, Sequence Flow & Neural Models"
+              >
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Go Technical ⚡</span>
+              </button>
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
               Multimodal speech emotion recognition engine. Extract acoustic vocal prosody, NLP
@@ -475,12 +491,30 @@ export function App() {
             <Radio className="w-3.5 h-3.5 text-primary" />
             <span>Target Endpoint: <code className="font-mono bg-muted px-1.5 py-0.5 rounded">POST http://localhost:8000/api/v1/audio/analyze</code></span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <Info className="w-3.5 h-3.5" />
-            <span>Audio automatically converted to 16kHz 16-bit Mono PCM WAV in-browser</span>
+
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setIsArchitectureModalOpen(true)}
+              className="inline-flex items-center gap-1.5 text-primary hover:underline cursor-pointer font-medium"
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>Inspect Engine Blueprint & Tech Specs</span>
+            </button>
+
+            <div className="hidden md:flex items-center gap-1.5 text-muted-foreground">
+              <Info className="w-3.5 h-3.5" />
+              <span>Audio standardized to 16kHz float32 in RAM</span>
+            </div>
           </div>
         </div>
       </main>
+
+      {/* Technical Architecture & Flow Presentation Modal */}
+      <ArchitecturePresentationModal
+        isOpen={isArchitectureModalOpen}
+        onClose={() => setIsArchitectureModalOpen(false)}
+      />
     </div>
   );
 }

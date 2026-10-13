@@ -405,47 +405,112 @@ def test_acoustic_confidence_gating_and_abstention(monkeypatch):
     assert t3.emotion.abstained is False
 
 
-def test_merge_overlap_transcriptions(monkeypatch):
-    """Verify that overlap collisions replace mixed words with per-speaker separated transcriptions."""
-    from app.engine.diarizer import OverlapWindow
+def test_overlap_acoustic_energy_word_attribution():
+    """Verify that assign_words_to_speakers disambiguates overlapping words using stream acoustic energy."""
+    from app.engine.aligner import assign_words_to_speakers
+    from app.engine.diarizer import RawTurn
     from app.schemas.response import WordTiming
-    from app.services.orchestrator import _merge_overlap_transcriptions
-    import app.services.orchestrator as orch
 
-    # Overlap interval from 2.0 to 3.0 between SPEAKER_00 and SPEAKER_01
-    ov = OverlapWindow(start=2.0, end=3.0, speaker_a="SPEAKER_00", speaker_b="SPEAKER_01")
-    speaker_streams = {
-        "SPEAKER_00": torch.randn(16000 * 5),
-        "SPEAKER_01": torch.randn(16000 * 5),
-    }
-
-    base_words = [
-        WordTiming(word="Before", start=0.5, end=1.0),
-        WordTiming(word="CollisionJumble", start=2.2, end=2.8),
-        WordTiming(word="After", start=3.5, end=4.0),
+    sr = 16000
+    # Overlap interval from 2.0 to 3.0 where both speakers are active
+    diar_turns = [
+        RawTurn(speaker="SPEAKER_00", start=1.0, end=3.0),
+        RawTurn(speaker="SPEAKER_01", start=2.0, end=4.0),
     ]
 
-    # Mock transcribe_stream_words so it outputs distinct words per speaker
-    def mock_transcribe(speaker_wav, **kwargs):
-        return [WordTiming(word="SeparatedWord", start=0.2, end=0.6)]
+    # Create speaker streams: SPEAKER_00 has high energy at [2.1 - 2.4], SPEAKER_01 has high energy at [2.5 - 2.9]
+    st0 = torch.zeros(sr * 5)
+    st1 = torch.zeros(sr * 5)
+    st0[int(2.1 * sr) : int(2.4 * sr)] = 0.8
+    st1[int(2.5 * sr) : int(2.9 * sr)] = 0.8
 
-    monkeypatch.setattr(orch, "transcribe_stream_words", mock_transcribe)
+    words = [
+        WordTiming(word="ClearTurn0", start=1.2, end=1.8),
+        WordTiming(word="OverlapWordSpk0", start=2.1, end=2.4),
+        WordTiming(word="OverlapWordSpk1", start=2.5, end=2.9),
+        WordTiming(word="ClearTurn1", start=3.2, end=3.8),
+    ]
 
-    merged = _merge_overlap_transcriptions(
-        base_words=base_words,
-        speaker_streams=speaker_streams,
-        overlaps=[ov],
-        sr=16000,
+    assigned = assign_words_to_speakers(
+        words=words,
+        diarization_turns=diar_turns,
+        fallback_speaker="SPEAKER_00",
+        speaker_streams={"SPEAKER_00": st0, "SPEAKER_01": st1},
+        sr=sr,
     )
 
-    # CollisionJumble should be replaced by separated words with speaker attribution
-    words_text = [w.word for w in merged]
-    assert "Before" in words_text
-    assert "After" in words_text
-    assert "CollisionJumble" not in words_text
-    sep_words = [w for w in merged if w.word == "SeparatedWord"]
-    assert len(sep_words) == 2
-    assert {w.speaker for w in sep_words} == {"SPEAKER_00", "SPEAKER_01"}
+    assert assigned[0].speaker == "SPEAKER_00"
+    assert assigned[1].speaker == "SPEAKER_00"  # Higher energy in st0
+    assert assigned[2].speaker == "SPEAKER_01"  # Higher energy in st1
+    assert assigned[3].speaker == "SPEAKER_01"
+
+
+def test_per_speaker_turn_assembly_with_overlap():
+    """Verify that simultaneous overlapping speech from both speakers forms coherent concurrent turns without 1-word shredding."""
+    from app.engine.segmenter import assemble_interleaved_dialogue, group_words_into_turns
+    from app.schemas.response import WordTiming
+
+    # SPEAKER_00 speaks a complete sentence from 10.0 to 13.0
+    spk0_words = [
+        WordTiming(word="The", start=10.0, end=10.3, speaker="SPEAKER_00"),
+        WordTiming(word="driver's", start=10.4, end=10.9, speaker="SPEAKER_00"),
+        WordTiming(word="name", start=11.0, end=11.3, speaker="SPEAKER_00"),
+        WordTiming(word="is", start=11.4, end=11.6, speaker="SPEAKER_00"),
+        WordTiming(word="Vikram.", start=11.7, end=12.5, speaker="SPEAKER_00"),
+    ]
+
+    # SPEAKER_01 interjects simultaneously from 10.8 to 11.8
+    spk1_words = [
+        WordTiming(word="Yeah,", start=10.8, end=11.2, speaker="SPEAKER_01"),
+        WordTiming(word="got", start=11.3, end=11.5, speaker="SPEAKER_01"),
+        WordTiming(word="it.", start=11.6, end=11.8, speaker="SPEAKER_01"),
+    ]
+
+    # Group words per speaker
+    per_speaker = {
+        "SPEAKER_00": group_words_into_turns(spk0_words, speaker="SPEAKER_00"),
+        "SPEAKER_01": group_words_into_turns(spk1_words, speaker="SPEAKER_01"),
+    }
+
+    assert len(per_speaker["SPEAKER_00"]) == 1
+    assert per_speaker["SPEAKER_00"][0].text == "The driver's name is Vikram."
+
+    assert len(per_speaker["SPEAKER_01"]) == 1
+    assert per_speaker["SPEAKER_01"][0].text == "Yeah, got it."
+
+    # Assemble dialogue
+    assembled = assemble_interleaved_dialogue(per_speaker)
+    assert len(assembled) == 2
+    # SPEAKER_00 starts first
+    assert assembled[0].speaker == "SPEAKER_00"
+    assert assembled[0].text == "The driver's name is Vikram."
+    # SPEAKER_01 overlaps cleanly
+    assert assembled[1].speaker == "SPEAKER_01"
+    assert assembled[1].text == "Yeah, got it."
+
+
+def test_per_speaker_consecutive_turn_merging():
+    """Verify that adjacent segments of the same speaker across brief pauses merge even when an interjection intervenes."""
+    from app.engine.diarizer import RawTurn, merge_consecutive_turns
+
+    turns = [
+        RawTurn(speaker="SPEAKER_00", start=1.0, end=3.0),
+        RawTurn(speaker="SPEAKER_01", start=2.5, end=3.2),  # Interjection
+        RawTurn(speaker="SPEAKER_00", start=3.3, end=5.0),  # SPEAKER_00 continues after 0.3s pause
+    ]
+
+    merged = merge_consecutive_turns(turns, max_gap_s=0.8, min_duration_s=0.25)
+    # SPEAKER_00 should be merged across the 0.3s pause (from 1.0 to 5.0)
+    spk0_turns = [t for t in merged if t.speaker == "SPEAKER_00"]
+    assert len(spk0_turns) == 1
+    assert spk0_turns[0].start == 1.0
+    assert spk0_turns[0].end == 5.0
+
+    # SPEAKER_01 should remain intact
+    spk1_turns = [t for t in merged if t.speaker == "SPEAKER_01"]
+    assert len(spk1_turns) == 1
+    assert spk1_turns[0].start == 2.5
+    assert spk1_turns[0].end == 3.2
 
 
 def test_post_analysis_endpoint():

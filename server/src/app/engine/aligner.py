@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import Dict, List, Optional
 
 import torch
 import torchaudio
@@ -19,13 +19,16 @@ def assign_words_to_speakers(
     words: List[WordTiming],
     diarization_turns: List[RawTurn],
     fallback_speaker: str = "SPEAKER_00",
+    speaker_streams: Optional[Dict[str, torch.Tensor]] = None,
+    sr: int = 16000,
 ) -> List[WordTiming]:
     """Map each word in the continuous ASR transcript to a diarized speaker.
 
-    WhisperX intersection algorithm with floor inertia:
+    WhisperX intersection algorithm with floor inertia and acoustic energy disambiguation:
     1. For each word [w_start, w_end], calculate exact temporal overlap (intersection)
        with every diarization interval.
-    2. The speaker with the maximum overlap duration claims the word.
+    2. If multiple speakers overlap with the word, use acoustic energy from SepFormer-separated
+       speaker streams to disambiguate which speaker is speaking during that word.
     3. Floor Inertia (Hysteresis): If a word falls in a brief boundary ambiguity or pause,
        favor the current floor speaker unless another speaker clearly intersects > 50%
        of the word duration or silence gap exceeds 0.4s.
@@ -57,6 +60,28 @@ def assign_words_to_speakers(
                 overlap_by_spk[turn.speaker] = overlap_by_spk.get(turn.speaker, 0.0) + dur
 
         if overlap_by_spk:
+            # Multi-speaker overlap disambiguation using acoustic energy from separated streams
+            if len(overlap_by_spk) > 1 and speaker_streams:
+                s_idx = max(0, int(w.start * sr))
+                e_idx = max(s_idx + 1, int(w.end * sr))
+                spk_energies: dict[str, float] = {}
+                for spk in overlap_by_spk.keys():
+                    if spk in speaker_streams:
+                        st = speaker_streams[spk]
+                        if s_idx < st.shape[-1]:
+                            w_slice = st[s_idx:min(e_idx, st.shape[-1])]
+                            spk_energies[spk] = float(w_slice.pow(2).mean().sqrt().item())
+
+                if spk_energies:
+                    sorted_e = sorted(spk_energies.items(), key=lambda kv: kv[1], reverse=True)
+                    top_spk, top_e = sorted_e[0]
+                    second_e = sorted_e[1][1] if len(sorted_e) > 1 else 0.0
+                    # If top speaker has noticeably higher energy in their separated stream, attribute to them
+                    if top_e > second_e * 1.3:
+                        w.speaker = top_spk
+                        current_speaker = top_spk
+                        continue
+
             # Pick speaker with highest overlap
             best_spk, max_overlap = max(overlap_by_spk.items(), key=lambda kv: kv[1])
             best_ratio = max_overlap / w_dur
