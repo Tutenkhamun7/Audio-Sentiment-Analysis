@@ -448,4 +448,72 @@ def test_merge_overlap_transcriptions(monkeypatch):
     assert {w.speaker for w in sep_words} == {"SPEAKER_00", "SPEAKER_01"}
 
 
+def test_post_analysis_endpoint():
+    """Verify that /api/v1/post-analysis accepts analyze output and returns structured LLM call analysis."""
+    from fastapi.testclient import TestClient
+    from main import create_app
+
+    client = TestClient(create_app())
+    payload = {
+        "call_id": "test_call_001",
+        "speakers": ["Agent", "Customer"],
+        "metrics": {
+            "duration_s": 24.5,
+            "total_speech_s": 22.0,
+            "overlap_s": 1.2,
+            "overlap_ratio": 0.05,
+            "interruption_count": 1,
+            "speaker_count": 2,
+            "branch_used": "mono",
+        },
+        "turns": [
+            {
+                "turn_id": "turn_001",
+                "speaker": "Customer",
+                "start": 0.5,
+                "end": 4.2,
+                "duration": 3.7,
+                "text": "My cab was delayed and I am very frustrated.",
+                "emotion": {"dominant_emotion": "angry"},
+                "sentiment": {"label": "negative"},
+            },
+            {
+                "turn_id": "turn_002",
+                "speaker": "Agent",
+                "start": 4.5,
+                "end": 8.5,
+                "duration": 4.0,
+                "text": "I apologize for the delay. I have dispatched an express vehicle right away.",
+                "emotion": {"dominant_emotion": "neutral"},
+                "sentiment": {"label": "positive"},
+            },
+            {
+                "turn_id": "turn_003",
+                "speaker": "Customer",
+                "start": 9.0,
+                "end": 12.0,
+                "duration": 3.0,
+                "text": "Thank you so much, that solves my issue.",
+                "emotion": {"dominant_emotion": "happy"},
+                "sentiment": {"label": "positive"},
+            },
+        ],
+    }
+
+    resp = client.post("/api/v1/post-analysis", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["call_id"] == "test_call_001"
+    assert "executive_summary" in data
+    assert data["call_outcome"] in ["Resolved", "Pending Follow-up", "Escalated", "Inquiry Answered"]
+    assert "customer_satisfaction_score" in data
+    assert "sentiment_trajectory" in data
+    assert "agent_performance" in data
+    assert isinstance(data["action_items"], list)
+    assert len(data["action_items"]) > 0
+    assert "risk_assessment" in data
+    assert isinstance(data["key_moments"], list)
+
+
+
 

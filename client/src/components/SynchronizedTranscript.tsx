@@ -1,17 +1,21 @@
 import React, { useRef, useEffect } from "react";
 import type { TimelineSegment } from "@/types/emotion";
 import { formatTime, getSpeakerTheme, getEmotionMeta } from "@/lib/constants";
-import { MessageSquareText, Play, AlertCircle } from "lucide-react";
+import { MessageSquareText, Play, Pause, AlertCircle } from "lucide-react";
 
 interface SynchronizedTranscriptProps {
   segments: TimelineSegment[];
   activeSegmentId: number | null;
-  onSeek: (startTime: number) => void;
+  isPlaying?: boolean;
+  onToggleFragment: (segment: TimelineSegment) => void;
+  onSeek?: (startTime: number) => void;
 }
 
 export const SynchronizedTranscript: React.FC<SynchronizedTranscriptProps> = ({
   segments,
   activeSegmentId,
+  isPlaying = false,
+  onToggleFragment,
   onSeek,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -20,12 +24,25 @@ export const SynchronizedTranscript: React.FC<SynchronizedTranscriptProps> = ({
   // Auto-scroll active segment smoothly into view
   useEffect(() => {
     if (activeBubbleRef.current && containerRef.current) {
-      activeBubbleRef.current.scrollIntoView({
+      const container = containerRef.current;
+      const bubble = activeBubbleRef.current;
+      const bubbleTop = bubble.offsetTop - container.offsetTop;
+      const targetScroll = bubbleTop - container.clientHeight / 2 + bubble.clientHeight / 2;
+
+      container.scrollTo({
+        top: Math.max(0, targetScroll),
         behavior: "smooth",
-        block: "nearest",
       });
     }
   }, [activeSegmentId]);
+
+  const handleRowClick = (seg: TimelineSegment) => {
+    if (onToggleFragment) {
+      onToggleFragment(seg);
+    } else if (onSeek) {
+      onSeek(seg.start_time);
+    }
+  };
 
   return (
     <div className="w-full flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-5 shadow-2xs">
@@ -38,17 +55,18 @@ export const SynchronizedTranscript: React.FC<SynchronizedTranscriptProps> = ({
           </h3>
         </div>
         <span className="text-[11px] text-muted-foreground/75 hidden sm:inline">
-          Click sentence to seek
+          Click fragment to play / pause
         </span>
       </div>
 
       {/* Sentence Bubbles Container */}
       <div
         ref={containerRef}
-        className="max-h-[420px] overflow-y-auto space-y-2.5 pr-1.5 scrollbar-thin scrollbar-thumb-muted-foreground/15 hover:scrollbar-thumb-muted-foreground/30"
+        className="max-h-[520px] overflow-y-auto space-y-2.5 pr-1.5 scrollbar-thin scrollbar-thumb-muted-foreground/15 hover:scrollbar-thumb-muted-foreground/30"
       >
         {segments.map((seg) => {
           const isActive = activeSegmentId === seg.segment_id;
+          const isFragmentPlaying = isActive && isPlaying;
           const speakerTheme = getSpeakerTheme(seg.speaker);
           const topAcoustic = seg.acoustic_emotion?.[0];
           const acousticMeta = topAcoustic ? getEmotionMeta(topAcoustic.label) : null;
@@ -57,7 +75,7 @@ export const SynchronizedTranscript: React.FC<SynchronizedTranscriptProps> = ({
             <div
               key={seg.segment_id}
               ref={isActive ? activeBubbleRef : null}
-              onClick={() => onSeek(seg.start_time)}
+              onClick={() => handleRowClick(seg)}
               className={`group relative p-3.5 rounded-xl cursor-pointer transition-all duration-150 border ${
                 isActive
                   ? "border-foreground/30 bg-muted/60 shadow-2xs ring-1 ring-foreground/10"
@@ -79,7 +97,7 @@ export const SynchronizedTranscript: React.FC<SynchronizedTranscriptProps> = ({
                   </span>
                 </div>
 
-                {/* Right badges & Click to play icon */}
+                {/* Right badges & Click to play/pause icon */}
                 <div className="flex items-center gap-1.5">
                   {/* Conflict badge */}
                   {seg.is_conflict && (
@@ -102,16 +120,34 @@ export const SynchronizedTranscript: React.FC<SynchronizedTranscriptProps> = ({
                     </span>
                   )}
 
-                  {/* Quick Seek Play Icon */}
-                  <span
-                    className={`p-1 rounded-md transition-colors ${
-                      isActive
-                        ? "text-foreground"
-                        : "text-muted-foreground/50 group-hover:text-foreground group-hover:bg-muted"
+                  {/* Play / Pause Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRowClick(seg);
+                    }}
+                    className={`p-1.5 rounded-lg transition-all active:scale-95 cursor-pointer ${
+                      isFragmentPlaying
+                        ? "bg-foreground text-background shadow-2xs"
+                        : isActive
+                          ? "bg-foreground/15 text-foreground hover:bg-foreground hover:text-background"
+                          : "text-muted-foreground/60 hover:text-foreground hover:bg-muted"
                     }`}
+                    title={
+                      isFragmentPlaying
+                        ? "Pause this fragment"
+                        : isActive
+                          ? "Resume this fragment"
+                          : "Play this fragment"
+                    }
                   >
-                    <Play className="w-3 h-3 fill-current" />
-                  </span>
+                    {isFragmentPlaying ? (
+                      <Pause className="w-3.5 h-3.5 fill-current" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    )}
+                  </button>
                 </div>
               </div>
 

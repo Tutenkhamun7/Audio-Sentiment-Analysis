@@ -77,3 +77,67 @@ class AnalyzeResponse(BaseModel):
     turns: List[TurnDetail]
     speakers: List[str]
     processing_time_s: float
+
+
+class ActionItem(BaseModel):
+    """Action item or agreed task from the call."""
+
+    task: str
+    owner: str = "Agent"
+    priority: str = "Medium"  # "High" | "Medium" | "Low"
+
+
+class SentimentTrajectory(BaseModel):
+    """Customer mood and emotional transition trajectory across the dialogue."""
+
+    start_emotion: str = "neutral"
+    end_emotion: str = "neutral"
+    trend: str = "stable"  # "improved" | "declined" | "stable" | "volatile"
+    details: str = ""
+
+
+class AgentPerformanceQA(BaseModel):
+    """Quality assurance and agent behavioral scorecard."""
+
+    empathy_score: float = 8.0  # 0.0 - 10.0
+    professionalism_score: float = 8.5  # 0.0 - 10.0
+    active_listening_score: float = 8.0  # 0.0 - 10.0
+    overall_score: float = 8.2  # 0.0 - 10.0
+    strengths: List[str] = Field(default_factory=list)
+    areas_for_improvement: List[str] = Field(default_factory=list)
+
+
+class RiskAssessment(BaseModel):
+    """Call escalation and customer churn risk indicators."""
+
+    escalation_risk: str = "Low"  # "High" | "Medium" | "Low"
+    churn_risk: str = "Low"  # "High" | "Medium" | "Low"
+    risk_factors: List[str] = Field(default_factory=list)
+
+
+class KeyMoment(BaseModel):
+    """Highlighted conversational turn with timestamp and insight."""
+
+    timestamp: str  # e.g. "00:14"
+    time_seconds: float = 0.0
+    speaker: str = "Speaker 1"
+    quote: str
+    insight: str
+    sentiment: Optional[str] = None
+
+
+class PostCallAnalysisResponse(BaseModel):
+    """LLM-generated comprehensive post-call analytical synthesis."""
+
+    call_id: str
+    executive_summary: str
+    call_outcome: str  # "Resolved" | "Pending Follow-up" | "Escalated" | "Inquiry Answered"
+    outcome_reasoning: str
+    customer_satisfaction_score: float = 8.0  # 0.0 - 10.0
+    sentiment_trajectory: SentimentTrajectory
+    agent_performance: AgentPerformanceQA
+    action_items: List[ActionItem] = Field(default_factory=list)
+    risk_assessment: RiskAssessment
+    key_moments: List[KeyMoment] = Field(default_factory=list)
+    llm_model_used: str = "qwen/qwen3.8-27b:free"
+    generated_at: str = ""

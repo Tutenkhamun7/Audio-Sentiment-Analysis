@@ -2,11 +2,16 @@ import type {
   TimelineSegment,
   EmotionScore,
   AgentSynthesis,
+  AudioAnalysisResult,
+  PostCallAnalysis,
 } from "@/types/emotion";
 import { ALL_EMOTIONS } from "@/lib/constants";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1/analyze";
+
+export const POST_ANALYSIS_API_URL =
+  import.meta.env.VITE_POST_ANALYSIS_URL || "http://localhost:8000/api/v1/post-analysis";
 
 export interface AnalyzeAudioResponse {
   segments: TimelineSegment[];
@@ -431,7 +436,7 @@ export async function analyzeAudioApi(
     // Normalize timeline segments supporting TurnDetail and TimelineSegment
     const segments: TimelineSegment[] = rawSegments.map((item, index) => {
       // 1. Semantic emotion extraction
-      let semantic: EmotionScore[] = [];
+      let semantic: EmotionScore[];
       if (Array.isArray(item.semantic_emotion) && item.semantic_emotion.length > 0) {
         semantic = item.semantic_emotion.map(normalizeEmotion);
       } else if (item.sentiment && typeof item.sentiment === "object") {
@@ -441,7 +446,7 @@ export async function analyzeAudioApi(
       }
 
       // 2. Acoustic emotion extraction
-      let acoustic: EmotionScore[] = [];
+      let acoustic: EmotionScore[];
       if (Array.isArray(item.acoustic_emotion) && item.acoustic_emotion.length > 0) {
         acoustic = item.acoustic_emotion.map(normalizeEmotion);
       } else if (item.emotion && typeof item.emotion === "object") {
@@ -676,4 +681,208 @@ export function createSyntheticDemoAudio(): Blob {
   }
 
   return new Blob([buffer], { type: "audio/wav" });
+}
+
+export const MOCK_POST_ANALYSIS: PostCallAnalysis = {
+  call_id: "dialogue_prosody_sample.wav",
+  executive_summary:
+    "Customer called customer support regarding an urgent airport taxi dispatch delay in Marathahalli, Bangalore. The agent acknowledged the concern, calmed the customer's initial frustration, and confirmed driver details with an express pickup dispatch.",
+  call_outcome: "Resolved",
+  outcome_reasoning:
+    "The agent successfully addressed the urgency, verified the booking vehicle, and dispatched the driver without requiring further customer escalation.",
+  customer_satisfaction_score: 8.8,
+  sentiment_trajectory: {
+    start_emotion: "Frustrated / Urgent",
+    end_emotion: "Relieved & Satisfied",
+    trend: "improved",
+    details:
+      "Customer started with high acoustic tension and delay anxiety, transitioning into calm appreciation after the agent confirmed immediate driver dispatch.",
+  },
+  agent_performance: {
+    empathy_score: 9.0,
+    professionalism_score: 9.2,
+    active_listening_score: 8.7,
+    overall_score: 9.0,
+    strengths: [
+      "Demonstrated immediate empathy towards customer airport flight deadline",
+      "Maintained professional composure during initial customer frustration",
+      "Confirmed specific action items (SMS with KA 9515 driver phone)",
+    ],
+    areas_for_improvement: [
+      "Could minimize conversational overlap during opening handover",
+    ],
+  },
+  action_items: [
+    {
+      task: "Dispatch KA 9515 vehicle via express route",
+      owner: "Support Team",
+      priority: "High",
+    },
+    {
+      task: "Send SMS confirmation with driver contact and live tracking URL",
+      owner: "Agent",
+      priority: "High",
+    },
+    {
+      task: "Automate 15-minute follow-up ping to verify passenger boarding",
+      owner: "Support Team",
+      priority: "Medium",
+    },
+  ],
+  risk_assessment: {
+    escalation_risk: "Low",
+    churn_risk: "Low",
+    risk_factors: [
+      "Initial delay anxiety posed brief churn risk",
+      "Subtle prosody-semantic divergence detected at turn #2",
+    ],
+  },
+  key_moments: [
+    {
+      timestamp: "00:04",
+      time_seconds: 4.2,
+      speaker: "Customer",
+      quote: "My cab was delayed and I urgently need to reach the airport!",
+      insight: "Primary caller distress point stated with elevated vocal arousal.",
+      sentiment: "Anxious / Urgent",
+    },
+    {
+      timestamp: "00:08",
+      time_seconds: 8.4,
+      speaker: "Agent",
+      quote: "I understand completely, let me assign an express vehicle right away.",
+      insight: "De-escalation pivot turn: agent validated urgency and took ownership.",
+      sentiment: "Empathetic",
+    },
+    {
+      timestamp: "00:17",
+      time_seconds: 17.2,
+      speaker: "Customer",
+      quote: "Thank you so much, I appreciate the prompt help!",
+      insight: "Resolution confirmation: tone shifted to relief and positive affect.",
+      sentiment: "Relieved",
+    },
+  ],
+  llm_model_used: "qwen/qwen3.8-27b:free",
+  generated_at: new Date().toISOString(),
+};
+
+/**
+ * Sends overall audio analysis results to the LLM post-analysis endpoint.
+ * Gracefully falls back to local synthesis if backend is unavailable.
+ */
+export async function analyzeCallPostSessionApi(
+  result: AudioAnalysisResult,
+  customInstructions?: string,
+  externalSignal?: AbortSignal
+): Promise<PostCallAnalysis> {
+  const payload = {
+    call_id: result.filename,
+    speakers: result.speakers,
+    overall_transcript: result.overall_transcript,
+    turns: result.segments.map((s) => ({
+      turn_id: `turn_${s.segment_id}`,
+      speaker: s.speaker,
+      start: s.start_time,
+      end: s.end_time,
+      text: s.text,
+      is_conflict: s.is_conflict,
+      is_interruption: s.is_interruption,
+      acoustic_emotion: s.acoustic_emotion,
+      semantic_emotion: s.semantic_emotion,
+    })),
+    metrics: {
+      duration_s: result.duration || (result.segments.length > 0 ? result.segments[result.segments.length - 1].end_time : 0),
+      speaker_count: result.speakers.length,
+      turn_count: result.segments.length,
+      interruption_count: result.segments.filter((s) => s.is_interruption).length,
+    },
+    custom_instructions: customInstructions,
+  };
+
+  try {
+    const response = await fetch(POST_ANALYSIS_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: externalSignal,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn("Post-analysis endpoint error response:", response.status, errText);
+      throw new Error(`Post-analysis API error (${response.status}): ${errText}`);
+    }
+
+    const data: PostCallAnalysis = await response.json();
+    return data;
+  } catch (err: unknown) {
+    if (
+      externalSignal?.aborted ||
+      (err instanceof Error &&
+        (err.name === "AbortError" ||
+          err.message.includes("cancelled by user") ||
+          err.message.includes("stopped by user")))
+    ) {
+      throw new Error("Analysis request was stopped by user.", { cause: err });
+    }
+
+    console.warn("Post-analysis endpoint unreachable; generating client-side synthesis fallback:", err);
+
+    // Fallback: Generate structured synthesis from segments
+    const conflictCount = result.segments.filter((s) => s.is_conflict).length;
+    const interruptCount = result.segments.filter((s) => s.is_interruption).length;
+    const isEscalated = conflictCount > 1 || interruptCount > 2;
+
+    return {
+      call_id: result.filename,
+      executive_summary: `Synthesized analysis for ${result.segments.length} conversational turns across ${result.speakers.join(", ")}. The call completed with ${conflictCount} affect anomalies and ${interruptCount} turn interruptions.`,
+      call_outcome: isEscalated ? "Pending Follow-up" : "Resolved",
+      outcome_reasoning: isEscalated
+        ? "Cross-modal tension or multiple interruptions were detected during customer turns."
+        : "Dialogue exchanges completed without major escalations.",
+      customer_satisfaction_score: isEscalated ? 6.2 : 8.5,
+      sentiment_trajectory: {
+        start_emotion: result.segments[0]?.acoustic_emotion?.[0]?.label || "Neutral",
+        end_emotion: result.segments[result.segments.length - 1]?.acoustic_emotion?.[0]?.label || "Neutral",
+        trend: isEscalated ? "volatile" : "improved",
+        details: "Emotional progression analyzed from acoustic prosody and verbal expressions.",
+      },
+      agent_performance: {
+        empathy_score: isEscalated ? 7.2 : 8.8,
+        professionalism_score: 8.6,
+        active_listening_score: isEscalated ? 7.0 : 8.5,
+        overall_score: isEscalated ? 7.6 : 8.6,
+        strengths: [
+          "Attentive responses maintained throughout dialogue",
+          "Addressed speaker requests without conversational dead-ends",
+        ],
+        areas_for_improvement: interruptCount > 0 ? ["Reduce conversational overlap and turn collisions"] : ["Continue current cadence"],
+      },
+      action_items: [
+        {
+          task: "Confirm call notes and log ticket status in CRM",
+          owner: "Agent",
+          priority: "Medium",
+        },
+      ],
+      risk_assessment: {
+        escalation_risk: isEscalated ? "Medium" : "Low",
+        churn_risk: isEscalated ? "Medium" : "Low",
+        risk_factors: conflictCount > 0 ? [`${conflictCount} prosody-semantic conflict moments detected`] : ["No critical risk indicators"],
+      },
+      key_moments: result.segments.slice(0, 3).map((s) => ({
+        timestamp: `${Math.floor(s.start_time / 60).toString().padStart(2, "0")}:${Math.floor(s.start_time % 60).toString().padStart(2, "0")}`,
+        time_seconds: s.start_time,
+        speaker: s.speaker,
+        quote: s.text,
+        insight: s.is_conflict ? "Cross-modal prosodic tension observed" : "Dialogue progression turn",
+        sentiment: s.acoustic_emotion?.[0]?.label || "Neutral",
+      })),
+      llm_model_used: "client_synthesizer_fallback",
+      generated_at: new Date().toISOString(),
+    };
+  }
 }

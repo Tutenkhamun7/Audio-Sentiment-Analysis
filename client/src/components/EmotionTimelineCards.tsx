@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import type { TimelineSegment, EmotionScore } from "@/types/emotion";
 import {
   formatTime,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/constants";
 import {
   Play,
+  Pause,
   ChevronDown,
   ChevronUp,
   AlertCircle,
@@ -20,37 +21,79 @@ import {
 interface EmotionTimelineCardsProps {
   segments: TimelineSegment[];
   activeSegmentId: number | null;
+  isPlaying?: boolean;
   onPlaySegment: (startTime: number, endTime?: number) => void;
+  onToggleSegment?: (segment: TimelineSegment) => void;
 }
 
 export const EmotionTimelineCards: React.FC<EmotionTimelineCardsProps> = ({
   segments,
   activeSegmentId,
+  isPlaying = false,
   onPlaySegment,
+  onToggleSegment,
 }) => {
-  // Store expanded state per segment ID
-  const [expandedMap, setExpandedMap] = useState<Record<number, boolean>>(() => {
-    const init: Record<number, boolean> = {};
-    segments.forEach((seg, idx) => {
-      init[seg.segment_id] = idx === 0 || seg.is_conflict;
-    });
-    return init;
-  });
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const activeCardRef = useRef<HTMLDivElement | null>(null);
+
+  // User manual expansion overrides per segment ID
+  const [manualExpandedMap, setManualExpandedMap] = useState<Record<number, boolean>>({});
+  // Track if all were explicitly expanded/collapsed via buttons
+  const [allExpandedMode, setAllExpandedMode] = useState<boolean | null>(null);
+
+  // Helper to determine whether a segment card should be expanded
+  const isSegmentExpanded = (id: number): boolean => {
+    // 1. If user explicitly toggled this specific card, respect it
+    if (typeof manualExpandedMap[id] === "boolean") {
+      return manualExpandedMap[id];
+    }
+    // 2. If user explicitly clicked Expand All or Collapse All, respect that
+    if (allExpandedMode !== null) {
+      return allExpandedMode;
+    }
+    // 3. Current active segment's emotion timeline is always displayed
+    if (activeSegmentId === id) {
+      return true;
+    }
+    // 4. On initial load, display the first segment if no active segment yet
+    if (activeSegmentId === null && segments.length > 0 && segments[0].segment_id === id) {
+      return true;
+    }
+    // 5. Always display prosody conflicts
+    const seg = segments.find((s) => s.segment_id === id);
+    if (seg?.is_conflict) {
+      return true;
+    }
+
+    return false;
+  };
 
   const toggleExpand = (id: number) => {
-    setExpandedMap((prev) => ({
+    setManualExpandedMap((prev) => ({
       ...prev,
-      [id]: !prev[id],
+      [id]: !isSegmentExpanded(id),
     }));
   };
 
   const toggleAll = (expand: boolean) => {
-    const next: Record<number, boolean> = {};
-    segments.forEach((seg) => {
-      next[seg.segment_id] = expand;
-    });
-    setExpandedMap(next);
+    setAllExpandedMode(expand);
+    setManualExpandedMap({});
   };
+
+  // Auto-scroll active segment card smoothly into view parallel to transcript
+  useEffect(() => {
+    if (activeCardRef.current && containerRef.current) {
+      const container = containerRef.current;
+      const card = activeCardRef.current;
+      const cardTop = card.offsetTop - container.offsetTop;
+      const targetScroll = cardTop - container.clientHeight / 2 + card.clientHeight / 2;
+
+      container.scrollTo({
+        top: Math.max(0, targetScroll),
+        behavior: "smooth",
+      });
+    }
+  }, [activeSegmentId]);
 
   // Helper to ensure 8 emotions are mapped for comparison bars
   const normalizeEmotionBars = (emotions: EmotionScore[] = []): EmotionScore[] => {
@@ -75,6 +118,10 @@ export const EmotionTimelineCards: React.FC<EmotionTimelineCardsProps> = ({
           <h3 className="text-sm sm:text-base font-semibold text-foreground">
             Segmented Emotion Timeline
           </h3>
+          <div className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted/70 text-muted-foreground border border-border/70">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/80 animate-pulse" />
+            <span>Auto-Sync</span>
+          </div>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -95,10 +142,13 @@ export const EmotionTimelineCards: React.FC<EmotionTimelineCardsProps> = ({
         </div>
       </div>
 
-      {/* Vertical Segment Cards List */}
-      <div className="space-y-3">
+      {/* Vertical Segment Cards List (Scrollable, Parallel to Transcript) */}
+      <div
+        ref={containerRef}
+        className="max-h-[520px] overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-muted-foreground/15 hover:scrollbar-thumb-muted-foreground/30"
+      >
         {segments.map((segment) => {
-          const isExpanded = !!expandedMap[segment.segment_id];
+          const isExpanded = isSegmentExpanded(segment.segment_id);
           const isActive = activeSegmentId === segment.segment_id;
           const speakerTheme = getSpeakerTheme(segment.speaker);
 
@@ -114,6 +164,7 @@ export const EmotionTimelineCards: React.FC<EmotionTimelineCardsProps> = ({
           return (
             <div
               key={segment.segment_id}
+              ref={isActive ? activeCardRef : null}
               className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
                 isActive
                   ? "border-foreground/30 bg-muted/40 shadow-2xs ring-1 ring-foreground/10"
@@ -127,17 +178,35 @@ export const EmotionTimelineCards: React.FC<EmotionTimelineCardsProps> = ({
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Play Segment Button */}
+                    {/* Play / Pause Segment Button */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onPlaySegment(segment.start_time, segment.end_time);
+                        if (onToggleSegment) {
+                          onToggleSegment(segment);
+                        } else {
+                          onPlaySegment(segment.start_time, segment.end_time);
+                        }
                       }}
-                      className="p-1.5 rounded-lg bg-muted text-foreground/80 hover:bg-foreground hover:text-background transition-colors active:scale-95 cursor-pointer"
-                      title="Play this segment"
+                      className={`p-1.5 rounded-lg transition-all active:scale-95 cursor-pointer ${
+                        isActive && isPlaying
+                          ? "bg-foreground text-background shadow-2xs"
+                          : "bg-muted text-foreground/80 hover:bg-foreground hover:text-background"
+                      }`}
+                      title={
+                        isActive && isPlaying
+                          ? "Pause this segment"
+                          : isActive
+                            ? "Resume this segment"
+                            : "Play this segment"
+                      }
                     >
-                      <Play className="w-3 h-3 fill-current" />
+                      {isActive && isPlaying ? (
+                        <Pause className="w-3 h-3 fill-current" />
+                      ) : (
+                        <Play className="w-3 h-3 fill-current" />
+                      )}
                     </button>
 
                     {/* Speaker Tag */}

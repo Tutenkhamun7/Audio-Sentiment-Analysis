@@ -24,6 +24,10 @@ interface AudioPlayerHUDProps {
   onCurrentTimeUpdate?: (time: number) => void;
   activeSegmentId: number | null;
   setActiveSegmentId: (id: number | null) => void;
+  isPlaying?: boolean;
+  onPlaybackStateChange?: (isPlaying: boolean) => void;
+  playbackCommand?: "play" | "pause" | "resume" | null;
+  onCommandHandled?: () => void;
 }
 
 const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2];
@@ -37,6 +41,9 @@ export const AudioPlayerHUD: React.FC<AudioPlayerHUDProps> = ({
   onCurrentTimeUpdate,
   activeSegmentId,
   setActiveSegmentId,
+  onPlaybackStateChange,
+  playbackCommand,
+  onCommandHandled,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -153,20 +160,65 @@ export const AudioPlayerHUD: React.FC<AudioPlayerHUDProps> = ({
     }
   }, [seekTime, stopAtTime, onSeekHandled]);
 
-  // Sync active segment with audio playback
+  // Synchronize playing state with parent
   useEffect(() => {
-    const current = segments.find(
-      (s) => currentTime >= s.start_time && currentTime <= s.end_time
-    );
+    onPlaybackStateChange?.(isPlaying);
+  }, [isPlaying, onPlaybackStateChange]);
 
-    if (current) {
-      if (activeSegmentId !== current.segment_id) {
-        setActiveSegmentId(current.segment_id);
-      }
-    } else {
+  // Handle external playback commands (play/pause/resume from fragments)
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !playbackCommand) return;
+
+    if (playbackCommand === "pause") {
+      audio.pause();
+    } else if (playbackCommand === "resume" || playbackCommand === "play") {
+      audio
+        .play()
+        .then(() => {
+          setPlaybackError(null);
+        })
+        .catch((err: unknown) => {
+          console.warn("Playback error on command:", err);
+        });
+    }
+
+    onCommandHandled?.();
+  }, [playbackCommand, onCommandHandled]);
+
+  // Sync active segment with audio playback seamlessly without gap flickering
+  useEffect(() => {
+    if (!segments || segments.length === 0) {
       if (activeSegmentId !== null) {
         setActiveSegmentId(null);
       }
+      return;
+    }
+
+    // 1. Direct match: currentTime falls within segment start/end bounds
+    let current = segments.find(
+      (s) => currentTime >= s.start_time && currentTime <= s.end_time
+    );
+
+    // 2. Gap handling: if playback is between segments or before the first segment starts
+    if (!current) {
+      if (currentTime < segments[0].start_time) {
+        // Pre-roll / before first utterance
+        current = segments[0];
+      } else if (currentTime > segments[segments.length - 1].end_time) {
+        // At or past final utterance
+        current = segments[segments.length - 1];
+      } else {
+        // In a gap/pause between two utterances: maintain the segment that just finished
+        const pastSegments = segments.filter((s) => currentTime >= s.start_time);
+        if (pastSegments.length > 0) {
+          current = pastSegments[pastSegments.length - 1];
+        }
+      }
+    }
+
+    if (current && activeSegmentId !== current.segment_id) {
+      setActiveSegmentId(current.segment_id);
     }
   }, [currentTime, segments, activeSegmentId, setActiveSegmentId]);
 

@@ -36,6 +36,7 @@ from app.schemas.response import (
     EmotionAnalysis,
     SentimentAnalysis,
     TurnDetail,
+    WordTiming,
 )
 
 logger = logging.getLogger(__name__)

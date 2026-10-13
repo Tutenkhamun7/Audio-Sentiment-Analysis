@@ -10,8 +10,9 @@ import torch
 
 from app.core.audio import load_audio_from_bytes
 from app.core.config import settings
-from app.schemas.request import AnalyzeOptions
-from app.schemas.response import AnalyzeResponse
+from app.schemas.request import AnalyzeOptions, PostAnalysisRequest
+from app.schemas.response import AnalyzeResponse, PostCallAnalysisResponse
+from app.services.call_analyzer import CallAnalyzerService
 from app.services.orchestrator import AudioAnalysisOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,21 @@ async def analyze_audio(
     except Exception as err:
         logger.exception("Analysis pipeline failed: %s", err)
         raise HTTPException(status_code=500, detail=f"Pipeline error: {str(err)}")
+
+
+@router.post("/post-analysis", response_model=PostCallAnalysisResponse)
+@router.post("/call-analysis", response_model=PostCallAnalysisResponse)
+async def analyze_call_post_session(
+    payload: PostAnalysisRequest,
+) -> PostCallAnalysisResponse:
+    """Analyze the overall conversational call response using LLM reasoning."""
+    try:
+        service = CallAnalyzerService()
+        result = await service.analyze_call(payload)
+        return result
+    except Exception as err:
+        logger.exception("Post-call analysis failed: %s", err)
+        raise HTTPException(status_code=500, detail=f"Post-call analysis error: {str(err)}")
 
 
 @router.get("/health")

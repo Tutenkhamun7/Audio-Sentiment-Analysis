@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -41,3 +41,15 @@ class AnalyzeOptions(BaseModel):
         default=None,
         description="Optional initial prompt context to guide proper nouns and terminology in Whisper",
     )
+
+
+class PostAnalysisRequest(BaseModel):
+    """Payload accepting overall analyze endpoint response for LLM call analysis."""
+
+    call_id: Optional[str] = "call"
+    metrics: Optional[Dict[str, Any]] = None
+    turns: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    speakers: Optional[List[str]] = Field(default_factory=list)
+    overall_transcript: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    processing_time_s: Optional[float] = None

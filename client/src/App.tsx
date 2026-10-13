@@ -7,13 +7,16 @@ import { AudioPlayerHUD } from "@/components/AudioPlayerHUD";
 import { SynchronizedTranscript } from "@/components/SynchronizedTranscript";
 import { EmotionTimelineCards } from "@/components/EmotionTimelineCards";
 import { AgentSynthesisCard } from "@/components/AgentSynthesisCard";
+import { PostAnalysisSection } from "@/components/PostAnalysisSection";
 import {
   analyzeAudioApi,
+  analyzeCallPostSessionApi,
   MOCK_ANALYSIS_DATA,
   MOCK_AGENT_CONTEXT,
+  MOCK_POST_ANALYSIS,
   createSyntheticDemoAudio,
 } from "@/services/api";
-import type { AudioAnalysisResult, TimelineSegment } from "@/types/emotion";
+import type { AudioAnalysisResult, TimelineSegment, PostCallAnalysis } from "@/types/emotion";
 import {
   Upload,
   Mic,
@@ -44,6 +47,12 @@ export function App() {
   const [seekTime, setSeekTime] = useState<number | null>(null);
   const [stopAtTime, setStopAtTime] = useState<number | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [playbackCommand, setPlaybackCommand] = useState<"play" | "pause" | "resume" | null>(null);
+
+  // Post-call LLM analysis state
+  const [postAnalysis, setPostAnalysis] = useState<PostCallAnalysis | null>(null);
+  const [isPostAnalysisLoading, setIsPostAnalysisLoading] = useState<boolean>(false);
 
   // Cancel ongoing request
   const handleCancelAnalysis = useCallback(() => {
@@ -64,6 +73,10 @@ export function App() {
     setSeekTime(null);
     setStopAtTime(null);
     setActiveSegmentId(null);
+    setIsPlaying(false);
+    setPlaybackCommand(null);
+    setPostAnalysis(null);
+    setIsPostAnalysisLoading(false);
   }, [handleCancelAnalysis]);
 
   // Switch input section tab and reset any processed audio state
@@ -83,7 +96,7 @@ export function App() {
 
     try {
       const response = await analyzeAudioApi(file, file.name, controller.signal);
-      setAnalysisResult({
+      const newResult: AudioAnalysisResult = {
         segments: response.segments,
         filename: response.filename || file.name,
         fileSize: file.size,
@@ -91,7 +104,18 @@ export function App() {
         speakers: response.speakers,
         overall_transcript: response.overall_transcript,
         agent_context: response.agent_context,
-      });
+      };
+      setAnalysisResult(newResult);
+      if (response.segments && response.segments.length > 0) {
+        setActiveSegmentId(response.segments[0].segment_id);
+      }
+
+      // Background LLM post-call analysis
+      setIsPostAnalysisLoading(true);
+      analyzeCallPostSessionApi(newResult, undefined, controller.signal)
+        .then((data) => setPostAnalysis(data))
+        .catch((e) => console.warn("Auto post-analysis notice:", e))
+        .finally(() => setIsPostAnalysisLoading(false));
     } catch (err: unknown) {
       if (err instanceof Error && (err.name === "AbortError" || err.message.includes("stopped by user"))) {
         setErrorMessage(null);
@@ -120,7 +144,7 @@ export function App() {
 
     try {
       const response = await analyzeAudioApi(wavBlob, recordingFilename, controller.signal);
-      setAnalysisResult({
+      const newResult: AudioAnalysisResult = {
         segments: response.segments,
         filename: response.filename || recordingFilename,
         fileSize: wavBlob.size,
@@ -128,7 +152,18 @@ export function App() {
         speakers: response.speakers,
         overall_transcript: response.overall_transcript,
         agent_context: response.agent_context,
-      });
+      };
+      setAnalysisResult(newResult);
+      if (response.segments && response.segments.length > 0) {
+        setActiveSegmentId(response.segments[0].segment_id);
+      }
+
+      // Background LLM post-call analysis
+      setIsPostAnalysisLoading(true);
+      analyzeCallPostSessionApi(newResult, undefined, controller.signal)
+        .then((data) => setPostAnalysis(data))
+        .catch((e) => console.warn("Auto post-analysis notice:", e))
+        .finally(() => setIsPostAnalysisLoading(false));
     } catch (err: unknown) {
       if (err instanceof Error && (err.name === "AbortError" || err.message.includes("stopped by user"))) {
         setErrorMessage(null);
@@ -161,17 +196,52 @@ export function App() {
       speakers,
       agent_context: MOCK_AGENT_CONTEXT,
     });
+    setPostAnalysis(MOCK_POST_ANALYSIS);
+    setIsPostAnalysisLoading(false);
+    if (MOCK_ANALYSIS_DATA && MOCK_ANALYSIS_DATA.length > 0) {
+      setActiveSegmentId(MOCK_ANALYSIS_DATA[0].segment_id);
+    }
   }, []);
 
-  const handleTranscriptSeek = (time: number) => {
+  const handleTranscriptSeek = useCallback((time: number) => {
     setStopAtTime(null);
     setSeekTime(time);
-  };
+  }, []);
 
-  const handlePlaySegment = (startTime: number, endTime?: number) => {
+  const handlePlaySegment = useCallback((startTime: number, endTime?: number) => {
     setStopAtTime(typeof endTime === "number" ? endTime : null);
     setSeekTime(startTime);
-  };
+  }, []);
+
+  const handleToggleFragment = useCallback(
+    (segment: TimelineSegment) => {
+      if (activeSegmentId === segment.segment_id) {
+        if (isPlaying) {
+          setPlaybackCommand("pause");
+        } else {
+          setPlaybackCommand("resume");
+        }
+      } else {
+        setActiveSegmentId(segment.segment_id);
+        setStopAtTime(segment.end_time);
+        setSeekTime(segment.start_time);
+      }
+    },
+    [activeSegmentId, isPlaying]
+  );
+
+  const handleGeneratePostAnalysis = useCallback(async () => {
+    if (!analysisResult) return;
+    setIsPostAnalysisLoading(true);
+    try {
+      const data = await analyzeCallPostSessionApi(analysisResult);
+      setPostAnalysis(data);
+    } catch (err: unknown) {
+      console.warn("Failed to generate post-call analysis:", err);
+    } finally {
+      setIsPostAnalysisLoading(false);
+    }
+  }, [analysisResult]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col antialiased selection:bg-primary/20 selection:text-primary">
@@ -358,6 +428,10 @@ export function App() {
               }}
               activeSegmentId={activeSegmentId}
               setActiveSegmentId={setActiveSegmentId}
+              isPlaying={isPlaying}
+              onPlaybackStateChange={setIsPlaying}
+              playbackCommand={playbackCommand}
+              onCommandHandled={() => setPlaybackCommand(null)}
             />
 
             {/* Grid Layout: Synchronized Transcript + Segment Emotion Breakdown */}
@@ -367,6 +441,8 @@ export function App() {
                 <SynchronizedTranscript
                   segments={analysisResult.segments}
                   activeSegmentId={activeSegmentId}
+                  isPlaying={isPlaying}
+                  onToggleFragment={handleToggleFragment}
                   onSeek={handleTranscriptSeek}
                 />
               </div>
@@ -376,10 +452,20 @@ export function App() {
                 <EmotionTimelineCards
                   segments={analysisResult.segments}
                   activeSegmentId={activeSegmentId}
+                  isPlaying={isPlaying}
                   onPlaySegment={handlePlaySegment}
+                  onToggleSegment={handleToggleFragment}
                 />
               </div>
             </div>
+
+            {/* E. LLM Post-Call Analysis & QA Intelligence Section */}
+            <PostAnalysisSection
+              analysis={postAnalysis}
+              isLoading={isPostAnalysisLoading}
+              onGenerate={handleGeneratePostAnalysis}
+              onSeek={handleTranscriptSeek}
+            />
           </div>
         )}
 

@@ -281,6 +281,25 @@ class Settings(BaseSettings):
         description="Duration threshold below which concurrent interjections are tagged as backchannels",
     )
 
+    # -------------------------------------------------------------
+    # 6. LLM & OpenRouter Post-Analysis Settings
+    # -------------------------------------------------------------
+    openrouter_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENROUTER_API_KEY"),
+        description="API key for OpenRouter LLM post-analysis",
+    )
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        validation_alias=AliasChoices("OPENROUTER_BASE_URL"),
+        description="Base URL for OpenRouter API",
+    )
+    llm_model: str = Field(
+        default="qwen/qwen3.8-27b:free",
+        validation_alias=AliasChoices("QWEN_MODEL", "LLM_MODEL"),
+        description="LLM model identifier on OpenRouter",
+    )
+
 
 # Global settings singleton
 settings = Settings()
